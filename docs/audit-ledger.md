@@ -191,6 +191,13 @@ forensics, move all three aside together, and restart the Admin Panel to begin
 a new chain. Record that evidence discontinuity externally. Never delete only
 the database, key, or anchor to make a check green.
 
+Repeated invalid-token polling is bounded before it reaches the ledger. DASH
+still rejects every request and maintains the in-memory failure window, but it
+emits at most one `auth-failed` and one `auth-throttled` event per peer per
+minute. Successful authentication clears that peer's aggregation state. This
+prevents a stale dashboard refresh loop from causing unbounded signed-ledger
+growth.
+
 ## Validation
 
 ```bash

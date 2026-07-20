@@ -488,6 +488,7 @@ DUNE_AUTOSCALER_ENABLED=true
 DUNE_AUTOSCALER_PROFILE=balanced
 DUNE_AUTOSCALER_DEFAULT_MODE=dynamic
 DUNE_AUTOSCALER_ALWAYS_ON_SERVICES=survival,overmap
+DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES=survival
 DUNE_AUTOSCALER_BALANCED_RETENTION_SECONDS=900
 DUNE_AUTOSCALER_BALANCED_RETENTION_BY_SERVICE=arrakeen=2700,harko-village=2700,deep-desert=1800
 DUNE_AUTOSCALER_BALANCED_MAX_WARM_MAPS=4
@@ -1071,6 +1072,7 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED` | Offline vehicle durability/fuel database maintenance gate. |
 | `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED` / `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED` | Live map memory/balancer and dynamic map-mode/travel-demand gates. |
 | `DUNE_AUTOSCALER_PROFILE` / `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | Select minimum-footprint, balanced, adaptive, full-warm, or custom startup policy and its core maps. |
+| `DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES` | Force maps with persistent crafting/production to remain live under every selective profile; production should list every populated map that needs background simulation. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_RECONCILE_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, three-second incremental detection, lower-frequency full lifecycle reconciliation, and guarded cold-start optimization. |
 | `DUNE_ADMIN_METRICS_CACHE_SECONDS` | Bounded reuse for expensive retained-metrics documents; live autoscaler safety gauges bypass the cache. |

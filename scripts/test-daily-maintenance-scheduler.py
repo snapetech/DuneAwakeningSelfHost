@@ -20,6 +20,7 @@ class DailyMaintenanceSchedulerTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.capture = self.root / "request.json"
+        self.headers = self.root / "headers.json"
         self.env_file = self.root / ".env"
         self.env_file.write_text(
             "\n".join([
@@ -38,9 +39,15 @@ import os, pathlib, sys
 args=sys.argv[1:]
 if any("/api/ops/update-readiness" in arg for arg in args):
     print(os.environ["FAKE_READINESS"])
+elif any("/api/security/change-contract" in arg for arg in args):
+    index=args.index("--data")
+    request=__import__("json").loads(args[index + 1])
+    assert request["targetPath"] == "/api/ops/restart"
+    print('{"ok":true,"required":true,"contract":{"governed":true},"token":"contract-token"}')
 else:
     index=args.index("--data")
     pathlib.Path(os.environ["FAKE_CAPTURE"]).write_text(args[index + 1], encoding="utf-8")
+    pathlib.Path(os.environ["FAKE_HEADERS"]).write_text(__import__("json").dumps(args), encoding="utf-8")
     print('{"ok":true}')
 """,
             encoding="utf-8",
@@ -56,6 +63,7 @@ else:
             "DUNE_DAILY_RESTART_UPDATE_POLICY": "certified",
             "FAKE_READINESS": json.dumps(readiness),
             "FAKE_CAPTURE": str(self.capture),
+            "FAKE_HEADERS": str(self.headers),
         })
         environment.update(overrides)
         return subprocess.run(
@@ -89,6 +97,8 @@ else:
         body = json.loads(self.capture.read_text(encoding="utf-8"))
         self.assertEqual("certified", body["update_policy"])
         self.assertIn("daily maintenance update policy: certified", completed.stdout)
+        args = json.loads(self.headers.read_text(encoding="utf-8"))
+        self.assertIn("X-DASH-Change-Contract: contract-token", args)
 
     def test_invalid_readiness_response_falls_back_without_losing_daily_restart(self):
         completed = self.invoke({}, FAKE_READINESS="not-json")

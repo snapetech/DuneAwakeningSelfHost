@@ -25,6 +25,8 @@ Environment:
                                         when DUNE_STEAM_LOGIN is anonymous.
   DUNE_STEAM_PASSWORD                   Optional Steam password.
   DUNE_STEAMCMD_COMMAND                 SteamCMD executable. Default: steamcmd.
+  DUNE_STEAMCMD_HOME                    Persistent HOME used by SteamCMD for
+                                        login and Steam Guard cache state.
   DUNE_STEAMCMD_VALIDATE                Add validate to app_update. Default: true.
   DUNE_STEAMCMD_TIMEOUT_SECONDS         Timeout wrapper if timeout exists. Default: 1800.
 USAGE
@@ -202,6 +204,7 @@ password="$(env_or_file DUNE_STEAM_PASSWORD)"
 steamcmd_command="$(env_or_file DUNE_STEAMCMD_COMMAND)"
 validate="$(env_or_file DUNE_STEAMCMD_VALIDATE)"
 timeout_seconds="$(env_or_file DUNE_STEAMCMD_TIMEOUT_SECONDS)"
+steamcmd_home="$(env_or_file DUNE_STEAMCMD_HOME)"
 
 required="${required:-true}"
 login="${login:-anonymous}"
@@ -209,6 +212,17 @@ owned_login="${owned_login:-}"
 steamcmd_command="${steamcmd_command:-steamcmd}"
 validate="${validate:-true}"
 timeout_seconds="${timeout_seconds:-1800}"
+steamcmd_home="${steamcmd_home:-$HOME/.steamcmd-dune}"
+
+if [[ "$steamcmd_home" != /* ]]; then
+  printf 'fail: DUNE_STEAMCMD_HOME must be an absolute path: %s\n' "$steamcmd_home" >&2
+  exit 64
+fi
+mkdir -p "$steamcmd_home"
+if [[ ! -w "$steamcmd_home" ]]; then
+  printf 'fail: DUNE_STEAMCMD_HOME is not writable: %s\n' "$steamcmd_home" >&2
+  exit 1
+fi
 
 if [[ "$app_id" == "4754530" && "$login" == "anonymous" && -n "$owned_login" ]]; then
   login="$owned_login"
@@ -258,10 +272,10 @@ cmd=(
 printf 'Running SteamCMD app_update for app %s into %s as %s\n' "$app_id" "$steam_dir" "$login"
 set +e
 if command -v timeout >/dev/null 2>&1; then
-  timeout "$timeout_seconds" "${cmd[@]}"
+  HOME="$steamcmd_home" timeout "$timeout_seconds" "${cmd[@]}"
   rc=$?
 else
-  "${cmd[@]}"
+  HOME="$steamcmd_home" "${cmd[@]}"
   rc=$?
 fi
 set -e

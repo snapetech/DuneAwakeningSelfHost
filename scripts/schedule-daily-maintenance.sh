@@ -210,6 +210,26 @@ PY
 
 args=(-fsS -H "Content-Type: application/json" -X POST --data "$body" "${auth_args[@]}")
 
+contract_request="$(python3 - "$body" <<'PY'
+import json
+import sys
+print(json.dumps({"targetPath": "/api/ops/restart", "requestBody": json.loads(sys.argv[1])}))
+PY
+)"
+contract_response="$(curl -fsS --max-time 30 -H "Content-Type: application/json" -X POST --data "$contract_request" "${auth_args[@]}" "http://${admin_host}:${admin_port}/api/security/change-contract")"
+read -r contract_required contract_token < <(python3 -c '
+import json, sys
+response=json.load(sys.stdin)
+required=bool(response.get("required") and (response.get("contract") or {}).get("governed"))
+token=response.get("token") or ""
+if required and not token:
+    raise SystemExit("change contract is required but the preflight returned no token")
+print("true" if required else "false", token)
+' <<<"$contract_response")
+if [[ "$contract_required" == "true" ]]; then
+  args+=(-H "X-DASH-Change-Contract: $contract_token")
+fi
+
 curl "${args[@]}" "http://${admin_host}:${admin_port}/api/ops/restart"
 printf '\n'
 printf 'daily maintenance update policy: %s\n' "$effective_update_policy"

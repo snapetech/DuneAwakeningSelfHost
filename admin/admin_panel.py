@@ -265,6 +265,8 @@ ALLOWED_HOSTS = {
 AUTH_FAILURE_WINDOW_SECONDS = 60
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURES = {}
+AUTH_FAILURE_AUDIT = {}
+AUTH_FAILURE_AUDIT_INTERVAL_SECONDS = 60
 AUDIT_LOCK = threading.Lock()
 STEAM_PROFILE_CACHE_LOCK = threading.Lock()
 CONFIRM_RESET_KEYSTONES = "RESET KEYSTONES"
@@ -1630,6 +1632,11 @@ AUTOSCALER_ALWAYS_ON_SERVICES = {
     for service in os.environ.get("DUNE_AUTOSCALER_ALWAYS_ON_SERVICES", "survival,overmap").split(",")
     if service.strip() in GAME_MAP_SERVICES
 }
+AUTOSCALER_SIMULATION_REQUIRED_SERVICES = {
+    service.strip()
+    for service in os.environ.get("DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES", "survival").split(",")
+    if service.strip() in GAME_MAP_SERVICES
+}
 AUTOSCALER_IDLE_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_IDLE_SECONDS", "300")), 86400))
 AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT = max(60, min(int(os.environ.get("DUNE_AUTOSCALER_DEMAND_TTL_SECONDS", "900")), 86400))
 AUTOSCALER_POLL_SECONDS = max(1, min(int(os.environ.get("DUNE_AUTOSCALER_POLL_SECONDS", "3")), 60))
@@ -1671,7 +1678,7 @@ AUTOSCALER_BALANCED_RETENTION_BY_SERVICE = parse_autoscaler_retention_overrides(
 
 
 def autoscaler_default_mode(service):
-    return "always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else AUTOSCALER_DEFAULT_MODE
+    return "always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES | AUTOSCALER_SIMULATION_REQUIRED_SERVICES else AUTOSCALER_DEFAULT_MODE
 
 
 SERVICE_LAYER_SERVICES = ["rmq-auth-shim", "text-router", "gateway", "director"]
@@ -2132,6 +2139,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_AUTOSCALER_PROFILE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fresh-state/reboot default: minimum-footprint, balanced, adaptive, full-warm, or custom."},
     "DUNE_AUTOSCALER_DEFAULT_MODE": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Fallback mode for maps missing from persistent state."},
     "DUNE_AUTOSCALER_ALWAYS_ON_SERVICES": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Comma-separated core maps retained by minimum and balanced profiles."},
+    "DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Maps that must remain live because their crafting, production, or world simulation does not advance while stopped."},
     "DUNE_AUTOSCALER_IDLE_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Minimum-profile and legacy default retention seconds."},
     "DUNE_AUTOSCALER_DEMAND_TTL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Protection window for a demand that has not yet produced an online player."},
     "DUNE_AUTOSCALER_POLL_SECONDS": {"group": "Autoscaling", "secret": False, "restart": True, "why": "Incremental Director-demand scan cadence, bounded to 1–60 seconds."},
@@ -3969,7 +3977,7 @@ def autoscaler_apply_profile(state, profile):
         state["minAvailableMemoryBytes"] = 0
     elif profile == "minimum-footprint":
         state["modes"] = {
-            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else "dynamic")
+            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES | AUTOSCALER_SIMULATION_REQUIRED_SERVICES else "dynamic")
             for service in GAME_MAP_SERVICES
         }
         state["retentionSeconds"] = AUTOSCALER_IDLE_SECONDS_DEFAULT
@@ -3978,7 +3986,7 @@ def autoscaler_apply_profile(state, profile):
         state["minAvailableMemoryBytes"] = 0
     elif profile in ("balanced", "adaptive"):
         state["modes"] = {
-            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES else "dynamic")
+            service: ("always-on" if service in AUTOSCALER_ALWAYS_ON_SERVICES | AUTOSCALER_SIMULATION_REQUIRED_SERVICES else "dynamic")
             for service in GAME_MAP_SERVICES
         }
         state["retentionSeconds"] = AUTOSCALER_BALANCED_RETENTION_SECONDS
@@ -4027,6 +4035,8 @@ def read_autoscaler_state():
     for service in GAME_MAP_SERVICES:
         if state["modes"].get(service) not in ("always-on", "dynamic", "disabled"):
             state["modes"][service] = autoscaler_default_mode(service)
+        if service in AUTOSCALER_SIMULATION_REQUIRED_SERVICES:
+            state["modes"][service] = "always-on"
     return state
 
 
@@ -4090,6 +4100,7 @@ def autoscaler_public_state(include_inventory=True):
         fastStart=AUTOSCALER_FAST_START,
         defaultMode=AUTOSCALER_DEFAULT_MODE,
         alwaysOnServices=sorted(AUTOSCALER_ALWAYS_ON_SERVICES),
+        simulationRequiredServices=sorted(AUTOSCALER_SIMULATION_REQUIRED_SERVICES),
         profiles=list(AUTOSCALER_PROFILES),
         mutationEnabled=AUTOSCALER_MUTATIONS_ENABLED,
     )
@@ -9263,7 +9274,11 @@ def capacity_apply_recommendations(actor="system", source="manual"):
     with AUTOSCALER_LOCK:
         state = read_autoscaler_state()
         for service, recommendation in sorted(status.get("recommendations", {}).items()):
-            if not recommendation.get("eligible") or state["modes"].get(service) != "dynamic":
+            if (
+                not recommendation.get("eligible")
+                or state["modes"].get(service) != "dynamic"
+                or service in AUTOSCALER_SIMULATION_REQUIRED_SERVICES
+            ):
                 continue
             current = autoscaler_retention_seconds(state, service)
             target = int(recommendation["recommendedRetentionSeconds"])
@@ -9286,7 +9301,9 @@ def capacity_apply_recommendations(actor="system", source="manual"):
         if changes:
             state["profile"] = "adaptive"
             write_autoscaler_state(state)
-    receipt = store.record_application(actor, source, changes) if changes else None
+    # Automatic no-op evaluations are receipts too: persisting them prevents an
+    # admin process restart from bypassing the configured evaluation interval.
+    receipt = store.record_application(actor, source, changes) if changes or source == "automatic" else None
     return {
         "ok": True,
         "applied": bool(changes),
@@ -9303,10 +9320,21 @@ def capacity_intelligence_tick():
         result = capacity_intelligence_store().observe(collect_capacity_intelligence_maps())
         auto_result = None
         if MUTATIONS_ENABLED and AUTOSCALER_MUTATIONS_ENABLED and CAPACITY_AUTO_APPLY_ENABLED:
-            last = CAPACITY_INTELLIGENCE_RUNTIME.get("lastAutoApplyAt") or 0
+            status = capacity_intelligence_store().status()
+            automatic = [row for row in status.get("applications", []) if row.get("source") == "automatic"]
+            persisted_last = 0
+            if automatic:
+                try:
+                    persisted_last = datetime.datetime.fromisoformat(automatic[0]["appliedAt"].replace("Z", "+00:00")).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    persisted_last = 0
+            last = max(float(CAPACITY_INTELLIGENCE_RUNTIME.get("lastAutoApplyAt") or 0), persisted_last)
+            if persisted_last:
+                CAPACITY_INTELLIGENCE_RUNTIME["lastAutoApplyAt"] = persisted_last
             if time.time() - float(last) >= CAPACITY_AUTO_APPLY_INTERVAL_HOURS * 3600:
                 auto_result = capacity_apply_recommendations(actor="system:capacity-intelligence", source="automatic")
-                CAPACITY_INTELLIGENCE_RUNTIME.update({"lastAutoApplyAt": time.time(), "lastAutoApply": auto_result})
+                if auto_result.get("receipt"):
+                    CAPACITY_INTELLIGENCE_RUNTIME.update({"lastAutoApplyAt": time.time(), "lastAutoApply": auto_result})
         CAPACITY_INTELLIGENCE_RUNTIME.update({"lastSampleAt": time.time(), "lastResult": result, "lastError": ""})
         return {**result, "autoApply": auto_result}
     except Exception as exc:
@@ -15661,6 +15689,11 @@ class Handler(BaseHTTPRequestHandler):
             runtime_error = str(exc)
         map_status = self.map_health_rows(farm, partitions, active_ids, runtimes)
         expected = len(partitions)
+        required_rows = [row for row in map_status if row.get("expectedOnline")]
+        required_expected = len(required_rows)
+        required_ready_alive = sum(1 for row in required_rows if row.get("ready") and row.get("alive") and row.get("active"))
+        required_alive_active = sum(1 for row in required_rows if row.get("alive") and row.get("active"))
+        required_active = sum(1 for row in required_rows if row.get("active"))
         current_ready_alive = sum(1 for row in map_status if row.get("ready") and row.get("alive") and row.get("active"))
         current_alive_active = sum(1 for row in map_status if row.get("alive") and row.get("active"))
         active_count = len(active)
@@ -15681,11 +15714,11 @@ class Handler(BaseHTTPRequestHandler):
         current_players = int(player_counts.get("online_controller_ids") or 0)
         player_peak = update_daily_player_peak(current_players)
         verdicts = [
-            {"name": "current partitions have alive active farm rows", "ok": expected > 0 and current_alive_active == expected, "value": f"{current_alive_active}/{expected}"},
-            {"name": "current partitions have ready/alive farm rows", "ok": expected > 0 and current_ready_alive == expected, "value": f"{current_ready_alive}/{expected}"},
-            {"name": "active server ids match partitions", "ok": expected > 0 and active_count == expected, "value": f"{active_count}/{expected}"},
-            {"name": "map health rows", "ok": expected > 0 and all(row.get("online") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('online'))}/{len(map_status)}"},
-            {"name": "RabbitMQ-backed farm registration", "ok": expected > 0 and current_alive_active == expected and active_count == expected, "value": "inferred from current world_partition rows, farm_state, and active_server_ids"},
+            {"name": "required maps have alive active farm rows", "ok": required_expected > 0 and required_alive_active == required_expected, "value": f"{required_alive_active}/{required_expected}"},
+            {"name": "required maps have ready/alive farm rows", "ok": required_expected > 0 and required_ready_alive == required_expected, "value": f"{required_ready_alive}/{required_expected}"},
+            {"name": "required active server ids match policy", "ok": required_expected > 0 and required_active == required_expected, "value": f"{required_active}/{required_expected}"},
+            {"name": "map lifecycle policy", "ok": expected > 0 and all(row.get("policySatisfied") for row in map_status), "value": f"{sum(1 for row in map_status if row.get('policySatisfied'))}/{len(map_status)}"},
+            {"name": "RabbitMQ-backed required farm registration", "ok": required_expected > 0 and required_alive_active == required_expected and required_active == required_expected, "value": "inferred from lifecycle-required world_partition rows, farm_state, and active_server_ids"},
             {"name": "FLS publication path", "ok": bool(fls_publication.get("ok")), "value": fls_publication.get("state", "unknown")},
             {"name": "player counts query", "ok": True},
         ]
@@ -15697,6 +15730,10 @@ class Handler(BaseHTTPRequestHandler):
                 "readyAlive": current_ready_alive,
                 "aliveActive": current_alive_active,
                 "expectedPartitions": expected,
+                "requiredMaps": required_expected,
+                "requiredReadyAlive": required_ready_alive,
+                "requiredAliveActive": required_alive_active,
+                "requiredActiveServers": required_active,
                 "activeServers": active_count,
                 "onlineMaps": sum(1 for row in map_status if row.get("online")),
                 "totalMaps": len(map_status),
@@ -15780,6 +15817,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def map_health_rows(self, farm, partitions, active_ids, runtimes=None):
         runtimes = runtimes or {}
+        autoscaler = read_autoscaler_state()
+        now = time.time()
         farm_by_server = {row.get("server_id"): row for row in farm}
         rows = []
         for part in partitions:
@@ -15789,6 +15828,14 @@ class Handler(BaseHTTPRequestHandler):
             alive = bool(farm_row.get("alive"))
             active = server_id in active_ids
             online = bool(server_id) and alive and active and not bool(part.get("blocked"))
+            service = self.service_for_partition(part)
+            mode = autoscaler.get("modes", {}).get(service, autoscaler_default_mode(service))
+            demand_at = float(autoscaler.get("demand", {}).get(service) or 0)
+            demanded = demand_at > 0 and now - demand_at <= int(autoscaler.get("demandTtlSeconds") or AUTOSCALER_DEMAND_TTL_SECONDS_DEFAULT)
+            expected_online = mode == "always-on" or demanded
+            runtime = runtimes.get(service)
+            runtime_running = str((runtime or {}).get("state") or "").lower() == "running"
+            policy_satisfied = online if expected_online or runtime_running else True
             rows.append({
                 "partition_id": part.get("partition_id"),
                 "map": part.get("map"),
@@ -15796,6 +15843,11 @@ class Handler(BaseHTTPRequestHandler):
                 "dimension": part.get("dimension_index"),
                 "server_id": server_id,
                 "online": online,
+                "service": service,
+                "mode": mode,
+                "demanded": demanded,
+                "expectedOnline": expected_online,
+                "policySatisfied": policy_satisfied,
                 "ready": ready,
                 "alive": alive,
                 "active": active,
@@ -15803,7 +15855,7 @@ class Handler(BaseHTTPRequestHandler):
                 "players": farm_row.get("connected_players", 0),
                 "game": self.addr_port(farm_row.get("game_addr"), farm_row.get("game_port")),
                 "igw": self.addr_port(farm_row.get("igw_addr"), farm_row.get("igw_port")),
-                "runtime": runtimes.get(self.service_for_partition(part)),
+                "runtime": runtime,
             })
         return rows
 
@@ -18467,13 +18519,21 @@ class Handler(BaseHTTPRequestHandler):
                 principal = None
         if not principal:
             if len(failures) >= AUTH_FAILURE_LIMIT:
-                self.audit("auth-throttled", ok=False, failures=len(failures))
+                audit_key = (peer, "auth-throttled")
+                if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
+                    self.audit("auth-throttled", ok=False, failures=len(failures))
+                    AUTH_FAILURE_AUDIT[audit_key] = now
                 raise PermissionError("too many failed admin token attempts")
             failures.append(now)
             AUTH_FAILURES[peer] = failures
-            self.audit("auth-failed", ok=False, failures=len(failures))
+            audit_key = (peer, "auth-failed")
+            if now - float(AUTH_FAILURE_AUDIT.get(audit_key) or 0) >= AUTH_FAILURE_AUDIT_INTERVAL_SECONDS:
+                self.audit("auth-failed", ok=False, failures=len(failures))
+                AUTH_FAILURE_AUDIT[audit_key] = now
             raise PermissionError("invalid admin token")
         AUTH_FAILURES.pop(peer, None)
+        AUTH_FAILURE_AUDIT.pop((peer, "auth-failed"), None)
+        AUTH_FAILURE_AUDIT.pop((peer, "auth-throttled"), None)
         required = access_control.required_capability(getattr(self, "command", "GET"), self.path)
         try:
             access_control.authorize(principal, required)

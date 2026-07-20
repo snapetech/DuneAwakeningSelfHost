@@ -219,7 +219,10 @@ with `validate` and `+@sSteamCmdForcePlatformType linux`. Anonymous access is
 not reliable for production hotfixes; set `DUNE_OWNED_STEAM_LOGIN` or
 `DUNE_STEAM_LOGIN` to an account that owns the tool, and set
 `DUNE_STEAMCMD_HOME` to a persistent SteamCMD cache such as
-`/home/keith/.steamcmd-dune`. If unattended login cannot use cached Steam Guard
+`/home/keith/.steamcmd-dune`. DASH sets this directory as SteamCMD's `HOME`, so
+its `Steam/config` and authentication state survive root-run systemd jobs and
+admin container recreation. Seed/authenticate that exact home once; a cache in
+the invoking account's normal home is not used. If unattended login cannot use cached Steam Guard
 state, set `DUNE_STEAM_PASSWORD` in the protected host `.env`. On a production
 headless host, prefer a SteamCMD-owned directory such as
 `/home/keith/dune-steamcmd-server` over a nested Steam desktop client library

@@ -222,6 +222,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         handler.headers = {}
         handler.require_token()
 
+    def test_invalid_token_audit_is_bounded_per_peer(self):
+        handler = object.__new__(self.panel.Handler)
+        handler.path = "/api/status"
+        handler.command = "GET"
+        handler.client_address = ("192.0.2.10", 12345)
+        handler.headers = {}
+        events = []
+        handler.audit = lambda action, **kwargs: events.append(action)
+        self.patch_flag("ADMIN_REQUIRE_TOKEN", True)
+        self.patch_flag("ADMIN_TOKEN", "real-owner-token")
+        self.patch_flag("RBAC_ENABLED", False)
+        self.patch_flag("FEDERATED_AUTH_ENABLED", False)
+        self.panel.AUTH_FAILURES.pop("192.0.2.10", None)
+        self.panel.AUTH_FAILURE_AUDIT.clear()
+        for _ in range(3):
+            with self.assertRaises(PermissionError):
+                handler.require_token()
+        self.assertEqual(["auth-failed"], events)
+
     def test_dual_control_blocks_without_approval_and_consumes_before_dispatch(self):
         body = {"action": "add-intel", "account_id": 7, "amount": 10, "dry_run": False, "confirm": "WRITE PLAYER PROGRESSION"}
         consumed = []
@@ -3601,6 +3620,34 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(self.panel.normalize_autoscaler_profile("adaptive"), "adaptive")
         self.assertEqual(self.panel.normalize_autoscaler_profile("invalid"), "balanced")
 
+    def test_simulation_required_maps_are_forced_always_on(self):
+        self.patch_flag("AUTOSCALER_SIMULATION_REQUIRED_SERVICES", {"deep-desert"})
+        state = self.panel.autoscaler_apply_profile({}, "adaptive")
+        self.assertEqual("always-on", state["modes"]["deep-desert"])
+        state["modes"]["deep-desert"] = "dynamic"
+        original_read = self.panel.read_care_package_state
+        self.panel.read_care_package_state = lambda path, default: state
+        self.addCleanup(lambda: setattr(self.panel, "read_care_package_state", original_read))
+        self.assertEqual("always-on", self.panel.read_autoscaler_state()["modes"]["deep-desert"])
+
+    def test_map_health_accepts_stopped_on_demand_and_requires_core_maps(self):
+        original_state = self.panel.read_autoscaler_state
+        self.panel.read_autoscaler_state = lambda: {
+            "modes": {"survival": "always-on", "arrakeen": "dynamic"},
+            "demand": {}, "demandTtlSeconds": 900,
+        }
+        self.addCleanup(lambda: setattr(self.panel, "read_autoscaler_state", original_state))
+        partitions = [
+            {"partition_id": 1, "server_id": "s1", "map": "Survival", "blocked": False},
+            {"partition_id": 3, "server_id": "s3", "map": "Arrakeen", "blocked": False},
+        ]
+        farm = [{"server_id": "s1", "ready": True, "alive": True}]
+        rows = {row["service"]: row for row in self.handler.map_health_rows(farm, partitions, {"s1"}, {})}
+        self.assertTrue(rows["survival"]["expectedOnline"])
+        self.assertTrue(rows["survival"]["policySatisfied"])
+        self.assertFalse(rows["arrakeen"]["expectedOnline"])
+        self.assertTrue(rows["arrakeen"]["policySatisfied"])
+
     def test_autoscaler_balanced_budget_evicts_oldest_optional_warm_map(self):
         original_inventory = self.panel.docker_service_inventory
         original_counts = self.panel.autoscaler_player_counts
@@ -5740,6 +5787,31 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         }])
         self.assertEqual(written[-1]["profile"], "adaptive")
         self.assertEqual(written[-1]["modes"], state["modes"])
+
+    def test_capacity_automatic_apply_cooldown_survives_process_restart(self):
+        applied = []
+        now = time.time()
+        fake = type("Store", (), {
+            "observe": lambda self, rows: {"ok": True},
+            "status": lambda self: {"applications": [{"source": "automatic", "appliedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))}]},
+        })()
+        originals = {
+            "capacity_intelligence_store": self.panel.capacity_intelligence_store,
+            "collect_capacity_intelligence_maps": self.panel.collect_capacity_intelligence_maps,
+            "capacity_apply_recommendations": self.panel.capacity_apply_recommendations,
+        }
+        self.panel.capacity_intelligence_store = lambda: fake
+        self.panel.collect_capacity_intelligence_maps = lambda: []
+        self.panel.capacity_apply_recommendations = lambda **kwargs: applied.append(kwargs) or {"ok": True, "applied": True}
+        for name, value in originals.items():
+            self.addCleanup(lambda name=name, value=value: setattr(self.panel, name, value))
+        self.patch_flag("MUTATIONS_ENABLED", True)
+        self.patch_flag("AUTOSCALER_MUTATIONS_ENABLED", True)
+        self.patch_flag("CAPACITY_AUTO_APPLY_ENABLED", True)
+        self.panel.CAPACITY_INTELLIGENCE_RUNTIME["lastAutoApplyAt"] = None
+        self.panel.capacity_intelligence_tick()
+        self.assertFalse(applied)
+        self.assertGreater(self.panel.CAPACITY_INTELLIGENCE_RUNTIME["lastAutoApplyAt"], now - 2)
 
     def test_landsraad_reward_and_contribution_plans_preserve_rollback(self):
         def fake_query(sql, params=None):

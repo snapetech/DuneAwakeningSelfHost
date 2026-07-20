@@ -194,6 +194,49 @@ MAP_SERVICES=(
   deep-desert-pvp
 )
 
+declare -A REQUIRED_MAPS=()
+autoscaler_enabled="$(env_or_file DUNE_AUTOSCALER_ENABLED false)"
+if [[ ! "$autoscaler_enabled" =~ ^(1|true|yes|on)$ ]]; then
+  for service in "${MAP_SERVICES[@]}"; do REQUIRED_MAPS["$service"]=1; done
+else
+  required_csv="$(env_or_file DUNE_AUTOSCALER_ALWAYS_ON_SERVICES survival,overmap),$(env_or_file DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES survival)"
+  IFS=',' read -ra required_services <<< "$required_csv"
+  for service in "${required_services[@]}"; do
+    service="${service//[[:space:]]/}"
+    [[ -n "$service" ]] && REQUIRED_MAPS["$service"]=1
+  done
+  autoscaler_state_file="$(env_or_file DUNE_AUTOSCALER_STATE_FILE backups/admin-panel/autoscaler.json)"
+  if [[ "$autoscaler_state_file" != /* ]]; then autoscaler_state_file="$repo_root/$autoscaler_state_file"; fi
+  if [[ -f "$autoscaler_state_file" ]]; then
+    while IFS= read -r service; do [[ -n "$service" ]] && REQUIRED_MAPS["$service"]=1; done < <(
+      python3 - "$autoscaler_state_file" <<'PY'
+import json, sys
+try:
+    state=json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    raise SystemExit(0)
+for service, mode in (state.get("modes") or {}).items():
+    if mode == "always-on":
+        print(service)
+PY
+    )
+  fi
+fi
+
+required_partition_csv=""
+for index in "${!MAP_SERVICES[@]}"; do
+  service="${MAP_SERVICES[$index]}"
+  if [[ -n "${REQUIRED_MAPS[$service]:-}" ]]; then
+    partition=$((index + 1))
+    required_partition_csv+="${required_partition_csv:+,}$partition"
+  fi
+done
+required_partition_csv="${required_partition_csv:-0}"
+
+map_required() {
+  [[ -n "${REQUIRED_MAPS[$1]:-}" ]]
+}
+
 declare -A PATCH_PROBE_EXCLUDE=()
 if [[ -n "$patch_probe_exclude_services" ]]; then
   IFS=',' read -ra excluded_probe_services <<< "$patch_probe_exclude_services"
@@ -291,18 +334,19 @@ section "Database Health"
 db_health="$(psql_at "
 select
   (select count(*) from dune.world_partition) || '|' ||
-  (select count(*) from dune.active_server_ids) || '|' ||
+  (select count(*) from dune.world_partition wp join dune.active_server_ids asi on asi.server_id=wp.server_id where wp.partition_id in ($required_partition_csv)) || '|' ||
   (select count(*)
    from dune.world_partition wp
    join dune.farm_state fs on fs.server_id=wp.server_id
    join dune.active_server_ids asi on asi.server_id=wp.server_id
-   where fs.ready and fs.alive);
+   where fs.ready and fs.alive and wp.partition_id in ($required_partition_csv));
 ")"
 IFS='|' read -r partition_count active_count ready_alive_count <<< "$db_health"
-if [[ "$partition_count" == "$active_count" && "$partition_count" == "$ready_alive_count" ]]; then
-  ok "farm ready/alive/active ${ready_alive_count}/${partition_count}"
+required_count="${#REQUIRED_MAPS[@]}"
+if [[ "$required_count" == "$active_count" && "$required_count" == "$ready_alive_count" ]]; then
+  ok "lifecycle-required farm ready/alive/active ${ready_alive_count}/${required_count}; configured partitions=$partition_count"
 else
-  fail "farm health partitions=$partition_count active=$active_count ready_alive=$ready_alive_count"
+  fail "farm health required=$required_count partitions=$partition_count active=$active_count ready_alive=$ready_alive_count"
 fi
 
 dd_rows="$(psql_at "
@@ -323,11 +367,19 @@ if grep -q '^8|DeepDesert_1|0|' <<< "$dd_rows" && grep -q '^31|DeepDesert_1|1|' 
 else
   fail "DD1/DD2 partition identity mismatch"
 fi
-if awk -F'|' '$6 !~ /^(t|true)$/ || $7 !~ /^(t|true)$/ || $8 !~ /^(t|true)$/ {bad=1} END {exit bad}' <<< "$dd_rows"; then
-  ok "DD1/DD2 ready/alive/active"
-else
-  fail "DD1/DD2 ready/alive/active"
-fi
+while IFS='|' read -r partition map dimension label players ready alive active; do
+  [[ -n "$partition" ]] || continue
+  service="deep-desert"; [[ "$partition" == 31 ]] && service="deep-desert-pvp"
+  if map_required "$service"; then
+    if [[ "$ready" =~ ^(t|true)$ && "$alive" =~ ^(t|true)$ && "$active" =~ ^(t|true)$ ]]; then
+      ok "$service lifecycle-required and ready/alive/active"
+    else
+      fail "$service lifecycle-required but not ready/alive/active"
+    fi
+  else
+    ok "$service is on-demand; stopped state is policy-compliant"
+  fi
+done <<< "$dd_rows"
 
 section "BRT Restore Canary"
 require_env_value DUNE_CHAT_COMMAND_DD1_BRT_RESTORE_ENABLED true
@@ -417,7 +469,11 @@ fi
 for service in "${probe_services[@]}"; do
   cid="$(container_id "$service")"
   if [[ -z "$cid" ]]; then
-    warn "patch probe skipped; service $service is not running"
+    if map_required "$service"; then
+      fail "patch probe skipped; lifecycle-required service $service is not running"
+    else
+      ok "patch probe skipped; on-demand service $service is intentionally stopped"
+    fi
     continue
   fi
   building_out="$(tmp_path "live-target-${service}-building.out")"

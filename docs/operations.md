@@ -42,7 +42,15 @@ service units or `.env` for host role selection; `POSTGRES_REMOTE_REPLICA_HOST`
 is the active Postgres owner and causes `compose.failover-standby.yaml` to be
 included on the promoted host.
 
-The `health verdict` section expects these signals at the same time: every current partition has an alive farm row joined through `world_partition`, every active server id is present, and game RabbitMQ service-user connections exist. A separate `current_ready_alive` line is still useful, but some live builds can leave `farm_state.ready=false` for a current map after the game log has already reported `Server farm is READY`.
+The `health verdict` section evaluates the current lifecycle policy: every
+`always-on` or actively demanded partition must have an alive farm row joined
+through `world_partition` and an active server id. A stopped `dynamic` or
+`disabled` map is policy-compliant, while a required map or a running optional
+map that has not registered is unhealthy. The response retains whole-farm
+counts for capacity visibility and adds `requiredMaps`, `requiredReadyAlive`,
+and per-map `mode`, `expectedOnline`, and `policySatisfied` fields. Some live
+builds can leave `farm_state.ready=false` briefly after the game log reports
+`Server farm is READY`.
 
 For RabbitMQ-specific checks, use:
 

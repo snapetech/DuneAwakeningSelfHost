@@ -113,6 +113,7 @@ DUNE_AUTOSCALER_ENABLED=true
 DUNE_AUTOSCALER_PROFILE=balanced
 DUNE_AUTOSCALER_DEFAULT_MODE=dynamic
 DUNE_AUTOSCALER_ALWAYS_ON_SERVICES=survival,overmap
+DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES=survival
 DUNE_AUTOSCALER_DEMAND_TTL_SECONDS=900
 DUNE_AUTOSCALER_POLL_SECONDS=3
 DUNE_AUTOSCALER_RECONCILE_SECONDS=30
@@ -247,6 +248,7 @@ autoscaler lock.
 | `DUNE_AUTOSCALER_ENABLED` | `false` | Start the worker and allow profile reconciliation. |
 | `DUNE_AUTOSCALER_PROFILE` | `balanced` | Fresh-state installation profile: minimum-footprint, balanced, adaptive, full-warm, or custom. |
 | `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | `survival,overmap` | Core maps for minimum and balanced profiles. |
+| `DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES` | `survival` | Maps whose persistent crafting, production, or world simulation must advance continuously. These are forced to `always-on`, cannot be evicted, and are excluded from adaptive retention changes. |
 | `DUNE_AUTOSCALER_IDLE_SECONDS` | `300` | Minimum-profile retention and legacy fallback. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` | `900` | Maximum protection for a demand with no observed player. |
 | `DUNE_AUTOSCALER_POLL_SECONDS` | `3` | Incremental Director-demand scan cadence, bounded to 1–60. |
@@ -262,6 +264,9 @@ Applying a profile afterward copies the loaded defaults into persistent state.
 Changing only `.env` does not overwrite an existing state file automatically.
 Adaptive application changes only the persistent per-service retention map; it
 does not rewrite `.env`, map modes, warm-map caps, or the memory floor.
+Every automatic evaluation, including a no-op, records an append-only receipt.
+The configured apply interval therefore survives admin-panel restarts; a
+process restart cannot cause repeated retention reductions.
 
 `adaptive` is a first-class process-start default. Fresh state, deleted state,
 and migrated installations no longer normalize an adaptive `.env` selection
