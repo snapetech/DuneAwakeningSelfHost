@@ -663,6 +663,12 @@ dune.dune_exchange_fulfill_sell_order(
 The bot passes the actual `dune_exchange_orders.revision`; it does not use
 PostgreSQL `xmin`.
 
+For stackable listings, native fulfillment can leave the reduced remainder as
+an active order while recording the completed unit in
+`dune_exchange_fulfilled_orders`. The buyer treats that state as a successful
+purchase when the fulfilled-row and remaining-item postconditions both hold;
+singleton listings still must disappear from the active order table.
+
 Buyer safety boundary:
 
 - live buying requires `DUNE_ARTIFICIAL_EXCHANGE_ENABLED=true`

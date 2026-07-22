@@ -2145,18 +2145,33 @@ def purchase_postcondition(conn, order_id):
                 where id=%s
             ) as active_order_exists,
             (
+                select item_id
+                from dune.dune_exchange_orders
+                where id=%s
+            ) as active_item_id,
+            (
                 select count(*)
                 from dune.dune_exchange_fulfilled_orders
                 where order_id=%s or original_order_id=%s
             ) as fulfilled_rows
             """,
-            (order_id, order_id, order_id),
+            (order_id, order_id, order_id, order_id),
         )
         row = cur.fetchone() or {}
     return {
         "activeOrderExists": bool(row.get("active_order_exists")),
+        "activeItemId": row.get("active_item_id"),
         "fulfilledRows": int(row.get("fulfilled_rows") or 0),
     }
+
+
+def purchase_postcondition_ok(postcondition):
+    """Accept sold stacks that remain as a reduced active listing."""
+    if not postcondition or int(postcondition.get("fulfilledRows") or 0) <= 0:
+        return False
+    if not postcondition.get("activeOrderExists"):
+        return True
+    return postcondition.get("activeItemId") not in (None, 0, "")
 
 
 def execute_purchase(conn, order, buyer_controller_id):
@@ -2207,7 +2222,7 @@ def execute_purchase(conn, order, buyer_controller_id):
     result = dict(result) if result else {}
     postcondition = purchase_postcondition(conn, order["id"])
     result["postcondition"] = postcondition
-    result["ok"] = postcondition["fulfilledRows"] > 0 and not postcondition["activeOrderExists"]
+    result["ok"] = purchase_postcondition_ok(postcondition)
     if not result["ok"]:
         result["reason"] = "native fulfill did not finalize order"
         log_event("purchase-postcondition-failed", orderId=order["id"], result=result)

@@ -476,6 +476,18 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(state["spent_global"], 0)
         notify.assert_not_called()
 
+    def test_purchase_postcondition_accepts_reduced_stack_listing(self):
+        self.assertTrue(bot.purchase_postcondition_ok({
+            "activeOrderExists": True,
+            "activeItemId": 485,
+            "fulfilledRows": 2,
+        }))
+        self.assertFalse(bot.purchase_postcondition_ok({
+            "activeOrderExists": True,
+            "activeItemId": None,
+            "fulfilledRows": 2,
+        }))
+
     def test_populator_catalog_filter_requires_enabled_baseline_and_validated(self):
         catalog_rows = {
             "enabled": self.catalog_row("enabled"),
