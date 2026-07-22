@@ -321,6 +321,17 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_ENABLED"] = "true"
         self.assertTrue(bot.env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False))
 
+    def test_live_buyer_loop_gets_service_confirmation(self):
+        original = bot.FILE_ENV.get("DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM")
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM"] = "RUN ARTIFICIAL EXCHANGE"
+        args = types.SimpleNamespace(loop=True, dry_run=False, confirm="")
+        bot.apply_service_confirmation(args)
+        self.assertEqual("RUN ARTIFICIAL EXCHANGE", args.confirm)
+        if original is None:
+            bot.FILE_ENV.pop("DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM", None)
+        else:
+            bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM"] = original
+
     def test_buyer_skips_npc_and_populator_owner_by_default(self):
         args = types.SimpleNamespace(include_npc_test_orders=False)
         self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=True), args), "npc order skipped")

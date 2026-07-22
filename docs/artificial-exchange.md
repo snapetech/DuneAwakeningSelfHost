@@ -173,6 +173,13 @@ Replenishment caveat: the buyer service (`dune-artificial-exchange-bot.service`,
 does not auto-replenish as players buy it. Install the populator service +
 watchdog timer to keep the market topped up, or re-run the reseed periodically.
 
+Production update (2026-07-22): `dune-artificial-exchange-populator.service` is
+now enabled and running on `kspls0`. The buyer scans every 60–120 seconds with
+all catalog-approved listings eligible within the configured daily and price
+caps; the populator scans every 120–240 seconds and only adds stock below the
+category targets. The live `.env` backup is retained under
+`backups/admin-panel/artificial-exchange/` on the host.
+
 Interim gate note: `DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_REQUIRE_SOURCE_CATEGORY`
 was set `false` because the generated `source-category-map.json` disagrees with
 `exchange_category_map.py` on resource depth (says depth 1; the live-rendering
@@ -665,6 +672,14 @@ Buyer safety boundary:
 - manual one-shot apply requires confirmation `RUN ARTIFICIAL EXCHANGE`
 - service-loop apply should be enabled only after a reviewed dry-run shows the
   expected selected and skipped orders
+
+The long-running buyer supplies `DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM`
+automatically when live purchases are enabled. Without that service-only
+confirmation, the first eligible listing would stop the unit before calling the
+native fulfill function. One-shot commands still require the explicit
+`--confirm` argument. Production profiles should use a 60–120 second scan
+window and probability `1.0`; daily Solari, seller, template, catalog-price,
+and buyer-balance limits remain the economic controls.
 
 Dry-run scan:
 
@@ -1389,8 +1404,9 @@ DUNE_ARTIFICIAL_EXCHANGE_ID=2
 DUNE_ARTIFICIAL_EXCHANGE_ACCESS_POINT_ID=1
 DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID=0
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000
-DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS=180
-DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS=420
+DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS=60
+DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS=120
+DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM=RUN ARTIFICIAL EXCHANGE
 ```
 
 Budgets and probabilities:
@@ -1400,9 +1416,9 @@ DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP=50000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP=10000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP=15000
 DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT=10
-DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=0.0004
-DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=0.0004
-DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=0.0004
+DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=1.0
+DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=1.0
+DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=1.0
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED=true
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE=Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_EXCHANGE=chat.whispers

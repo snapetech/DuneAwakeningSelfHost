@@ -164,6 +164,13 @@ def env_bool(name, default=False):
     return env(name, "true" if default else "false").lower() in ("1", "true", "yes", "on")
 
 
+def apply_service_confirmation(args):
+    """Supply the gated confirmation for a live long-running buyer service."""
+    if getattr(args, "loop", False) and not getattr(args, "dry_run", True) and not getattr(args, "confirm", ""):
+        args.confirm = env("DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM", CONFIRM)
+    return args
+
+
 def db_default_host():
     return "postgres" if pathlib.Path("/workspace/.env").exists() else "127.0.0.1"
 
@@ -2746,6 +2753,10 @@ def main():
             args.dry_run = env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_DRY_RUN", True)
         else:
             args.dry_run = env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", True)
+    # A long-running buyer service is an explicitly gated apply surface. Give
+    # it the same confirmation used by a one-shot apply; otherwise the first
+    # eligible listing crashes the service before native fulfill is called.
+    apply_service_confirmation(args)
     if populator_mode and not args.confirm:
         args.confirm = env("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_CONFIRM", "")
     log_event(
