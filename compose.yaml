@@ -220,6 +220,10 @@ services:
 
   director:
     image: registry.funcom.com/funcom/self-hosting/seabass-server-bg-director:${DUNE_IMAGE_TAG}
+    # Director currently terminates on malformed login envelopes instead of
+    # rejecting them. Keep the control plane self-healing while the upstream
+    # validation bug is worked around.
+    restart: unless-stopped
     mac_address: 02:42:ac:1f:f0:05
     dns:
       - 1.1.1.1
