@@ -279,6 +279,7 @@ run_steam_update_check() {
           -e "DUNE_STEAM_LOGIN=$(env_file_value DUNE_STEAM_LOGIN "$env_file")" \
           -e "DUNE_OWNED_STEAM_LOGIN=$(env_file_value DUNE_OWNED_STEAM_LOGIN "$env_file")" \
           -e "DUNE_STEAM_PASSWORD=$(env_file_value DUNE_STEAM_PASSWORD "$env_file")" \
+          -e "DUNE_STEAM_PASSWORD_FILE=$(env_file_value DUNE_STEAM_PASSWORD_FILE "$env_file")" \
           -e "DUNE_STEAMCMD_HOME=$(env_file_value DUNE_STEAMCMD_HOME "$env_file")" \
           -e "DUNE_STEAMCMD_COMMAND=$(env_file_value DUNE_STEAMCMD_COMMAND "$env_file")" \
           -e "DUNE_STEAMCMD_VALIDATE=$(env_file_value DUNE_STEAMCMD_VALIDATE "$env_file")" \
@@ -873,6 +874,7 @@ def run_host_update_check():
         "DUNE_STEAM_LOGIN",
         "DUNE_OWNED_STEAM_LOGIN",
         "DUNE_STEAM_PASSWORD",
+        "DUNE_STEAM_PASSWORD_FILE",
         "DUNE_STEAMCMD_HOME",
         "DUNE_STEAMCMD_COMMAND",
         "DUNE_STEAMCMD_VALIDATE",

@@ -155,6 +155,12 @@ fi
 
 uid_gid="$(id -u):$(id -g)"
 steam_password="${DUNE_STEAM_PASSWORD:-$(env_value DUNE_STEAM_PASSWORD)}"
+password_file="${DUNE_STEAM_PASSWORD_FILE:-$(env_value DUNE_STEAM_PASSWORD_FILE)}"
+if [[ -z "$steam_password" && -n "$password_file" ]]; then
+  [[ -r "$password_file" ]] || die "DUNE_STEAM_PASSWORD_FILE is not readable: $password_file"
+  steam_password="$(<"$password_file")"
+  steam_password="${steam_password%$'\n'}"
+fi
 login_args=(+login "$steam_login")
 if [[ -n "$steam_password" ]]; then
   login_args=(+login "$steam_login" "$steam_password")
@@ -187,6 +193,9 @@ run_steamcmd_update() {
   local dep
   if [[ "$non_interactive" != "true" ]]; then
     docker_flags+=(-it)
+  fi
+  if [[ -n "$password_file" ]]; then
+    docker_flags+=( -v "$password_file:$password_file:ro" )
   fi
   for dep in "${dependencies[@]}"; do
     update_args+=(+app_update "$dep" validate)

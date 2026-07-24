@@ -24,6 +24,8 @@ Environment:
   DUNE_OWNED_STEAM_LOGIN                Owned-account fallback for app 4754530
                                         when DUNE_STEAM_LOGIN is anonymous.
   DUNE_STEAM_PASSWORD                   Optional Steam password.
+  DUNE_STEAM_PASSWORD_FILE              Protected file containing password for
+                                        unattended owned-app updates.
   DUNE_STEAMCMD_COMMAND                 SteamCMD executable. Default: steamcmd.
   DUNE_STEAMCMD_HOME                    Persistent HOME used by SteamCMD for
                                         login and Steam Guard cache state.
@@ -201,6 +203,7 @@ required="$(env_or_file DUNE_RESTART_STEAMCMD_REQUIRED)"
 login="$(env_or_file DUNE_STEAM_LOGIN)"
 owned_login="$(env_or_file DUNE_OWNED_STEAM_LOGIN)"
 password="$(env_or_file DUNE_STEAM_PASSWORD)"
+password_file="$(env_or_file DUNE_STEAM_PASSWORD_FILE)"
 steamcmd_command="$(env_or_file DUNE_STEAMCMD_COMMAND)"
 validate="$(env_or_file DUNE_STEAMCMD_VALIDATE)"
 timeout_seconds="$(env_or_file DUNE_STEAMCMD_TIMEOUT_SECONDS)"
@@ -213,6 +216,12 @@ steamcmd_command="${steamcmd_command:-steamcmd}"
 validate="${validate:-true}"
 timeout_seconds="${timeout_seconds:-1800}"
 steamcmd_home="${steamcmd_home:-$HOME/.steamcmd-dune}"
+
+if [[ -z "$password" && -n "$password_file" ]]; then
+  [[ -r "$password_file" ]] || { printf 'fail: DUNE_STEAM_PASSWORD_FILE is not readable: %s\n' "$password_file" >&2; exit 1; }
+  password="$(<"$password_file")"
+  password="${password%$'\n'}"
+fi
 
 if [[ "$steamcmd_home" != /* ]]; then
   printf 'fail: DUNE_STEAMCMD_HOME must be an absolute path: %s\n' "$steamcmd_home" >&2

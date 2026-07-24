@@ -223,7 +223,9 @@ not reliable for production hotfixes; set `DUNE_OWNED_STEAM_LOGIN` or
 its `Steam/config` and authentication state survive root-run systemd jobs and
 admin container recreation. Seed/authenticate that exact home once; a cache in
 the invoking account's normal home is not used. If unattended login cannot use cached Steam Guard
-state, set `DUNE_STEAM_PASSWORD` in the protected host `.env`. On a production
+state, set `DUNE_STEAM_PASSWORD_FILE` to a mode-0600 file containing the account
+password (preferred over plaintext in `.env`). The updater reads it only at
+execution time. On a production
 headless host, prefer a SteamCMD-owned directory such as
 `/home/keith/dune-steamcmd-server` over a nested Steam desktop client library
 path. If `steamcmd` is not installed on the host, the restart hook can run
