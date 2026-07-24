@@ -35,6 +35,7 @@ USAGE
 }
 
 env_file="${1:-.env}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 case "$env_file" in
   -h|--help)
     usage
@@ -288,6 +289,11 @@ else
   rc=$?
 fi
 set -e
+
+if [[ "$rc" -ne 0 && "$app_id" == "4754530" && "${DUNE_STEAM_UPDATE_WORKER_ENABLED:-$(env_or_file DUNE_STEAM_UPDATE_WORKER_ENABLED)}" =~ ^(1|true|yes|on)$ ]]; then
+  "$script_dir/steam-update-worker-fallback.sh" "$env_file"
+  exit $?
+fi
 
 if [[ "$rc" -eq 0 ]]; then
   exit 0

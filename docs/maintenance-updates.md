@@ -234,6 +234,15 @@ is `cm2network/steamcmd:root`; pre-pull it before relying on unattended
 maintenance if you do not want the maintenance window to depend on a Docker Hub
 pull.
 
+When the production SteamCMD runtime is known-broken, enable the separate
+worker fallback with `DUNE_STEAM_UPDATE_WORKER_ENABLED=true` plus
+`DUNE_STEAM_UPDATE_WORKER_HOST`, `DUNE_STEAM_UPDATE_WORKER_SSH_USER`, and
+`DUNE_STEAM_UPDATE_WORKER_DIR`. The worker must be initialized once with the
+owned SteamCMD cache and SSH access. A local acquisition failure then runs the
+same updates on the worker, pulls the manifest and six battlegroup tarballs back,
+and continues through the normal image/tag/restart gates. Incomplete packages
+fail closed.
+
 Keep `DUNE_RESTART_STEAMCMD_REQUIRED=true` on live. When it is false, missing or
 failed SteamCMD logs a warning and the flow may continue with the package
 already present on disk, which can start stale images after a Funcom hotfix.
