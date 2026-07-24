@@ -251,7 +251,13 @@ for attempt in 1 2 3 4 5; do
 done
 
 if [[ "$steamcmd_rc" -ne 0 ]]; then
-  die "SteamCMD update failed after dependency retries"
+  worker_enabled="${DUNE_STEAM_UPDATE_WORKER_ENABLED:-$(env_value DUNE_STEAM_UPDATE_WORKER_ENABLED)}"
+  if [[ "$app_id" == "4754530" && "$worker_enabled" =~ ^(1|true|yes|on)$ && -x "$script_dir/steam-update-worker-fallback.sh" ]]; then
+    "$script_dir/steam-update-worker-fallback.sh" "$env_file"
+    steamcmd_rc=0
+  else
+    die "SteamCMD update failed after dependency retries"
+  fi
 fi
 
 manifest="$steam_dir/steamapps/appmanifest_${app_id}.acf"
