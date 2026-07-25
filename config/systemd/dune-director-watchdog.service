@@ -1,0 +1,15 @@
+[Unit]
+Description=Dune Director login-crash watchdog
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
+Environment=DUNE_DIRECTOR_WATCHDOG_INTERVAL=15
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/director-watchdog.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
