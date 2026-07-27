@@ -1002,7 +1002,16 @@ The admin panel exposes the same workflow under `Settings -> Artificial Exchange
 
 Start from [`.env.example`](.env.example). It is the source of truth for the full setting list.
 
-| Key | First-run/security meaning |
+> **Server-browser labels are intentionally different:**
+>
+> - Parent/top row: `[gateway].display_name` in `config/gateway.ini` — use the branded server title.
+> - Nested/details row: `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` — use the feature-list description.
+>
+> Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
+
+### Server identity and infrastructure
+
+| Setting | Purpose |
 | --- | --- |
 | `DUNE_STEAM_SERVER_DIR` | Local path to the official Steam self-host tool. |
 | `DUNE_IMAGE_TAG` | Image tag loaded from the Steam package; current example baseline is `1968181-0-shipping`. |
@@ -1018,6 +1027,11 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `POSTGRES_SUPER_PASSWORD` / `POSTGRES_DUNE_PASSWORD` | Local database credentials; never publish. |
 | `POSTGRES_REPLICATION_PASSWORD` | Required for optional streaming replica. |
 | `RMQ_HTTP_TOKEN_AUTH_SECRET` | Internal RabbitMQ auth-shim secret. |
+
+### Admin access and mutation safety
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_BIND_ADDRESS` / `DUNE_ADMIN_HOST_PORT` | Admin panel bind and host port; keep private. |
 | `DUNE_ADMIN_ALLOWED_HOSTS` | Host header allowlist for the admin panel. |
 | `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Owner recovery credential and authentication-required switch; authentication defaults on. |
@@ -1028,27 +1042,50 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, character slots, player-identity cleanup, and native character deletion. |
 | `DUNE_ADMIN_AUDIT_LEDGER_ENABLED` / `DUNE_ADMIN_AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS` | Seal sanitized audit events and require a verified admission receipt before privileged POST dispatch. |
 | `DUNE_ADMIN_CHANGE_CONTRACTS_ENABLED` / `DUNE_ADMIN_CHANGE_CONTRACTS_REQUIRED` / `DUNE_ADMIN_CHANGE_CONTRACT_TTL_SECONDS` | Compile and enforce exact-body blast-radius reviews for governed mutations; the freshness window is bounded to 30–300 seconds. |
+
+### Public directory
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_PUBLIC_DIRECTORY_ENABLED` / `DUNE_PUBLIC_DIRECTORY_ENTRY_URL` / `DUNE_PUBLIC_SITE_URL` | Opt in to a short-lived Ed25519-signed public descriptor at the exact public HTTPS URL; publication remains disabled until the full public contract validates. |
 | `DUNE_PUBLIC_DIRECTORY_NAME` / `DUNE_PUBLIC_DIRECTORY_DESCRIPTION` / `DUNE_PUBLIC_DIRECTORY_REGION` / `DUNE_PUBLIC_DIRECTORY_CAPACITY` / `DUNE_PUBLIC_DIRECTORY_DISCORD_INVITE` / `DUNE_PUBLIC_DIRECTORY_TTL_SECONDS` | Directory-specific callsign/summary, privacy-bounded region, population capacity, optional canonical Discord invite, and a 60–900-second descriptor lifetime; these do not alter in-game browser text. |
 
-Server-browser ordering is deliberately split based on the observed in-game browser. `config/gateway.ini` `[gateway].display_name` is the parent/top row and must stay the branded server title. `WORLD_NAME` and `DUNE_SERVER_DISPLAY_NAME` are the nested/details row and must stay the feature-list description. Do not copy the branded title into `WORLD_NAME` or `DUNE_SERVER_DISPLAY_NAME`.
+### Restart, chat, and player presence
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_RESTART_COMMAND` | Hook used by scheduled restart jobs. |
 | `DUNE_ADMIN_ANNOUNCE_COMMAND` | Hook used by restart announcements. |
 | `DUNE_CHAT_COMMAND_ADMINS` / `DUNE_CHAT_COMMAND_ADMIN_FLS_IDS` | Chat-command allowlists. |
 | `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE` and private reply keys | Optional private command replies through the verified `chat.whispers` path. |
 | `DUNE_CHAT_SPAM_*` | Repeat-message spam detection, exemptions, public announcements, and kick backend settings. |
 | `DUNE_PLAYER_PRESENCE_*` | Player-presence announcements, private welcomes, milestones, base reminders, restart notices, map-health alerts, admin digests, and starter-tool grants. |
+
+### Exchange, care packages, and item tooling
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ARTIFICIAL_EXCHANGE_*` | Artificial Exchange buyer, settlement, funding, populator, catalog, service, and watchdog gates/tuning. |
 | `DUNE_ADMIN_CARE_PACKAGES_ENABLED` | Manual execution gate for reviewed `config/care-packages.json` presets; preview remains available. |
 | `DUNE_ADMIN_CARE_PACKAGES_AUTO_ENABLED` | Independent gate for persistent first-online and returning-player scans. |
 | `DUNE_ADMIN_BLUEPRINT_MUTATIONS_ENABLED` | Blueprint import/delete execution gate; listing, export, and dry-run remain available. |
 | `DUNE_ADMIN_BLUEPRINT_MAX_BODY_BYTES` | Separate bounded request limit for blueprint archives; default 32 MiB. |
 | `DUNE_ADMIN_AUGMENT_MUTATIONS_ENABLED` | Existing-item and pre-augmented grant execution gate; compatibility reads and previews remain available. |
+
+### Backup and recovery proof
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_BACKUP_MUTATIONS_ENABLED` / `DUNE_ADMIN_BACKUP_RESTORE_ENABLED` | Separate browser gates for backup create/import/delete and disruptive restore execution. |
 | `DUNE_RESTORE_DRILL_ENABLED` / `DUNE_ADMIN_RESTORE_DRILL_EXECUTION_ENABLED` | Enable recovery-proof status/scheduling and separately authorize dashboard queueing of the isolated no-network restore drill. |
 | `DUNE_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` / `DUNE_RESTORE_DRILL_MAX_RESTORE_SECONDS` | Recovery-point freshness and measured `pg_restore` recovery-time targets. |
 | `DUNE_RABBITMQ_RESTORE_DRILL_ENABLED` / `DUNE_ADMIN_RABBITMQ_RESTORE_DRILL_EXECUTION_ENABLED` | Load dual-broker networkless recovery proof and separately authorize dashboard queueing. |
 | `DUNE_RABBITMQ_RESTORE_DRILL_IMAGE` / `DUNE_RABBITMQ_RESTORE_DRILL_MAX_BACKUP_AGE_HOURS` / `DUNE_RABBITMQ_RESTORE_DRILL_READINESS_SECONDS` | Exact already-loaded broker image plus recovery-point and per-broker readiness targets. |
+
+### Reliability, capacity, and alerting
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_OPERATIONAL_SLO_ENABLED` / `DUNE_ADMIN_OPERATIONAL_SLO_MUTATIONS_ENABLED` | Enable retained reliability sampling and separately authorize incident acknowledgement/notes and planned-maintenance exclusions. |
 | `DUNE_OPERATIONAL_SLO_POLICY` / `DUNE_OPERATIONAL_SLO_DATABASE` | Versioned objective policy and private SQLite reliability ledger. |
 | `DUNE_CAPACITY_INTELLIGENCE_ENABLED` / `DUNE_CAPACITY_INTELLIGENCE_POLICY` / `DUNE_CAPACITY_INTELLIGENCE_DATABASE` | Retained map-efficiency/cold-start evidence, versioned model policy, and private SQLite ledger. |
@@ -1056,26 +1093,51 @@ Server-browser ordering is deliberately split based on the observed in-game brow
 | `DUNE_MAINTENANCE_PLANNER_ENABLED` / `DUNE_MAINTENANCE_PLANNER_POLICY` | Zero-inclusive aggregate population learning and the bounded policy used to rank exact low-impact maintenance windows. |
 | `DUNE_ALERT_INBOX_ENABLED` / `DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED` | Enable authoritative Prometheus alert ingestion and separately admit operator acknowledgement; acknowledgement never silences or resolves the source. |
 | `DUNE_ALERT_INBOX_PROMETHEUS_URL` / `DUNE_ALERT_INBOX_POLL_SECONDS` / `DUNE_ALERT_INBOX_RETENTION_DAYS` | Private Prometheus origin, bounded collection cadence, and durable resolved-transition retention. |
+
+### Database and service control
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_DATABASE_QUERY_ENABLED` / `DUNE_ADMIN_DATABASE_WRITE_ENABLED` | Bounded one-statement SQL console and its separately gated write mode. |
 | `DUNE_ADMIN_DATABASE_ROW_MUTATIONS_ENABLED` / `DUNE_ADMIN_DATABASE_PASSWORD_MUTATIONS_ENABLED` | Primary-key row editor and coordinated credential-rotation gates. |
 | `DUNE_ADMIN_SERVICE_CONTROL_ENABLED` / `DUNE_ADMIN_STATEFUL_SERVICE_CONTROL_ENABLED` | Browser start/stop/restart gates; stateful Postgres/RabbitMQ control remains separately disabled by default. |
+
+### Game updates and maintenance
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_UPDATE_MUTATIONS_ENABLED` | Game update/restart, candidate-validated stack fast-forward, runtime repair, and auto-update timer installation gate. |
 | `DUNE_UPDATE_READINESS_ENABLED` / `DUNE_UPDATE_REQUIRE_READINESS_RECEIPT` / `DUNE_UPDATE_READINESS_TTL_SECONDS` / `DUNE_UPDATE_READINESS_POLL_SECONDS` | Candidate-bound signed game-update certification, browser and scheduled-maintenance apply enforcement, bounded receipt lifetime, and cached read-only collection cadence. |
 | `DUNE_DAILY_RESTART_UPDATE_POLICY` | `certified` applies only an already staged, freshly revalidated candidate; `current` never changes the build; `automatic` is rejected while readiness receipts are required. |
 | `DUNE_MAINTENANCE_OUTCOME_RETENTION` | Retained private HMAC-signed restart/shutdown outcome receipts; default `400`, bounded `10..5000`. |
 | `DUNE_UPDATE_READINESS_STEAM_DIR` / `DUNE_UPDATE_READINESS_REQUIRED_HOST` | Read-only staged-package inspection mount and exact Docker-host gate for short-lived stage/apply helpers. |
 | `DUNE_HOTFIX_AUTO_APPLY_WITHOUT_READINESS` | Explicit legacy opt-out from stage-only unattended hotfix behavior; keep false to require certification before load/restart. |
+
+### Player and character operations
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_PLAYER_RUNTIME_MUTATIONS_ENABLED` / `DUNE_SERVER_NOTIFICATION_SYSTEM_ENABLED` / `DUNE_SERVER_COMMANDS_AUTH_TOKEN` | Native skill/water/kick/vehicle action gate, game notification consumer, and shared Version 2 token. |
 | `DUNE_ADMIN_PLAYER_LIFE_RECOVERY_ENABLED` | Native persisted offline dead-state recovery gate; preview remains available and execution additionally requires the master mutation gate, unchanged fingerprint, backup, locks, exact confirmation, and current isolated semantic proof for readiness. |
 | `DUNE_ADMIN_OFFLINE_TELEPORT_ENABLED` | Native persisted offline pawn-move gate; preview remains available and execution additionally requires the master mutation gate, unchanged fingerprint, backup, locks, exact confirmation, transform readback, and current isolated semantic proof for readiness. |
 | `DUNE_ADMIN_CHARACTER_BACKUPS_ENABLED` | Native portable character snapshot/restore gate; preview/list/download remain available, while capture/restore/delete require the master mutation gate and restore additionally requires exact patch/fingerprint binding, a full dump, locks, native import, identity readback, and current isolated export/import proof for readiness. |
 | `DUNE_ADMIN_VEHICLE_MUTATIONS_ENABLED` | Offline vehicle durability/fuel database maintenance gate. |
+
+### Map memory and autoscaling
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_MEMORY_MUTATIONS_ENABLED` / `DUNE_ADMIN_AUTOSCALER_MUTATIONS_ENABLED` | Live map memory/balancer and dynamic map-mode/travel-demand gates. |
 | `DUNE_AUTOSCALER_PROFILE` / `DUNE_AUTOSCALER_ALWAYS_ON_SERVICES` | Select minimum-footprint, balanced, adaptive, full-warm, or custom startup policy and its core maps. |
 | `DUNE_AUTOSCALER_SIMULATION_REQUIRED_SERVICES` | Force maps with persistent crafting/production to remain live under every selective profile; production should list every populated map that needs background simulation. |
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_RECONCILE_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, three-second incremental detection, lower-frequency full lifecycle reconciliation, and guarded cold-start optimization. |
 | `DUNE_ADMIN_METRICS_CACHE_SECONDS` | Single-flight bounded reuse for expensive retained-metrics documents; concurrent refreshes reuse the prior authenticated document, while live autoscaler safety gauges bypass the cache. |
+
+### Bootstrap, community integrations, and public networking
+
+| Setting | Purpose |
+| --- | --- |
 | `DUNE_ADMIN_BOOTSTRAP_MUTATIONS_ENABLED` | Browser TLS/database/full-stack bootstrap action gate. |
 | `DUNE_DISCORD_ADAPTER_ENABLED` / `DUNE_ADMIN_ADDON_MUTATIONS_ENABLED` | Permissioned bot adapter (role-scoped reads plus typed community actions) and community addon lifecycle gates. |
 | `DUNE_COMMUNITY_REWARDS_ENABLED` / `DUNE_COMMUNITY_DELIVERY_ENABLED` | Isolated wallet/shop/playtime/webhook/reward-track APIs and the separately gated offline game-item delivery worker. |
