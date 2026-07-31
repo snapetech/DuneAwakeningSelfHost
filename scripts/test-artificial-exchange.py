@@ -228,12 +228,24 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(reason, "above max_buy_price tolerance")
 
-    def test_record_spend_updates_all_daily_buckets(self):
+    def test_stack_purchase_total_is_used_for_caps_and_daily_buckets(self):
         state = {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}}
-        bot.record_spend(state, self.order(item_price=75))
-        self.assertEqual(state["spent_global"], 75)
-        self.assertEqual(state["spent_by_seller"]["10"], 75)
-        self.assertEqual(state["spent_by_template"]["ItemA"], 75)
+        order = self.order(item_price=75, stack_size=4, initial_stack_size=10)
+        self.assertEqual(bot.purchase_quantity(order), 4)
+        self.assertEqual(bot.purchase_total_price(order), 300)
+        bot.record_spend(state, order)
+        self.assertEqual(state["spent_global"], 300)
+        self.assertEqual(state["spent_by_seller"]["10"], 300)
+        self.assertEqual(state["spent_by_template"]["ItemA"], 300)
+
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP"] = "299"
+        ok, reason = bot.spend_available(
+            {"spent_global": 0, "spent_by_seller": {}, "spent_by_template": {}},
+            order,
+            self.catalog_row(max_buy_price=75),
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "global daily cap")
 
     def test_blocked_sellers_and_probability_env(self):
         bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_BLOCKED_SELLERS"] = "10, 20"
@@ -271,7 +283,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(captured["command"][0], "/bin/echo")
         self.assertIn("2x ItemA", captured["command"][1])
-        self.assertIn("1234 Solari", captured["command"][1])
+        self.assertIn("2468 Solari", captured["command"][1])
         self.assertIn("next relog", captured["command"][1])
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
@@ -476,14 +488,14 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(state["spent_global"], 0)
         notify.assert_not_called()
 
-    def test_purchase_postcondition_accepts_reduced_stack_listing(self):
-        self.assertTrue(bot.purchase_postcondition_ok({
+    def test_purchase_postcondition_requires_full_listing_finalization(self):
+        self.assertFalse(bot.purchase_postcondition_ok({
             "activeOrderExists": True,
             "activeItemId": 485,
             "fulfilledRows": 2,
         }))
-        self.assertFalse(bot.purchase_postcondition_ok({
-            "activeOrderExists": True,
+        self.assertTrue(bot.purchase_postcondition_ok({
+            "activeOrderExists": False,
             "activeItemId": None,
             "fulfilledRows": 2,
         }))

@@ -261,7 +261,8 @@ def load_state():
 
 
 def spend_available(state, order, catalog_row):
-    price = int(order["item_price"])
+    unit_price = int(order["item_price"])
+    total_price = purchase_total_price(order)
     global_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP", "50000"))
     seller_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP", "10000"))
     template_cap = int(env("DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP", "15000"))
@@ -270,19 +271,19 @@ def spend_available(state, order, catalog_row):
     tolerated_max_buy_price = math.floor(max_buy_price * (1.0 + max_buy_price_tolerance_pct / 100.0))
     seller = str(order["owner_id"])
     template = order["template_id"]
-    if state.get("spent_global", 0) + price > global_cap:
+    if state.get("spent_global", 0) + total_price > global_cap:
         return False, "global daily cap"
-    if state["spent_by_seller"].get(seller, 0) + price > seller_cap:
+    if state["spent_by_seller"].get(seller, 0) + total_price > seller_cap:
         return False, "seller daily cap"
-    if state["spent_by_template"].get(template, 0) + price > template_cap:
+    if state["spent_by_template"].get(template, 0) + total_price > template_cap:
         return False, "template daily cap"
-    if price > tolerated_max_buy_price:
+    if unit_price > tolerated_max_buy_price:
         return False, "above max_buy_price tolerance"
     return True, ""
 
 
 def record_spend(state, order):
-    price = int(order["item_price"])
+    price = purchase_total_price(order)
     seller = str(order["owner_id"])
     template = order["template_id"]
     state["spent_global"] = state.get("spent_global", 0) + price
@@ -2166,21 +2167,23 @@ def purchase_postcondition(conn, order_id):
 
 
 def purchase_postcondition_ok(postcondition):
-    """Accept sold stacks that remain as a reduced active listing."""
+    """Require the requested full listing quantity to be finalized."""
     if not postcondition or int(postcondition.get("fulfilledRows") or 0) <= 0:
         return False
-    if not postcondition.get("activeOrderExists"):
-        return True
-    return postcondition.get("activeItemId") not in (None, 0, "")
+    return not postcondition.get("activeOrderExists")
 
 
 def execute_purchase(conn, order, buyer_controller_id):
+    quantity = purchase_quantity(order)
+    total_price = purchase_total_price(order)
     log_event(
         "purchase-attempt",
         orderId=order["id"],
         templateId=order["template_id"],
         sellerId=order["owner_id"],
-        price=order["item_price"],
+        unitPrice=order["item_price"],
+        quantity=quantity,
+        totalPrice=total_price,
         buyerControllerId=buyer_controller_id,
         revision=order["revision"],
     )
@@ -2202,7 +2205,7 @@ def execute_purchase(conn, order, buyer_controller_id):
                 in_order_revision => %s,
                 in_dst_inventory_id => null,
                 in_dst_index => 0,
-                in_count => 1,
+                in_count => %s,
                 in_solaris_fee => 0,
                 in_purge_time => %s
             )).*
@@ -2215,6 +2218,7 @@ def execute_purchase(conn, order, buyer_controller_id):
                 buyer_controller_id,
                 order["id"],
                 order["revision"],
+                quantity,
                 purge_time,
             ),
         )
@@ -2234,12 +2238,16 @@ def purchase_result_ok(result):
     return bool(result and result.get("ok"))
 
 
-def purchase_notice_stack_size(order):
+def purchase_quantity(order):
     for key in ("stack_size", "initial_stack_size"):
         value = order.get(key)
         if value not in (None, ""):
             return max(1, int(value))
     return 1
+
+
+def purchase_total_price(order):
+    return int(order.get("item_price") or 0) * purchase_quantity(order)
 
 
 def render_purchase_notice(order):
@@ -2251,8 +2259,10 @@ def render_purchase_notice(order):
         order_id=order.get("id"),
         template_id=order.get("template_id", "item"),
         item=order.get("template_id", "item"),
-        count=purchase_notice_stack_size(order),
-        price=int(order.get("item_price") or 0),
+        count=purchase_quantity(order),
+        price=purchase_total_price(order),
+        total_price=purchase_total_price(order),
+        unit_price=int(order.get("item_price") or 0),
         seller=order.get("seller_character_name") or "seller",
         server_name=env("DUNE_SERVER_DISPLAY_NAME", env("WORLD_NAME", "this server")),
     )
@@ -2662,7 +2672,14 @@ def scan_once(args):
             if not revision_matches(conn, order):
                 skipped.append({"orderId": order["id"], "templateId": order["template_id"], "reason": "stale revision"})
                 continue
-            decision = {"orderId": order["id"], "templateId": order["template_id"], "sellerId": order["owner_id"], "price": order["item_price"]}
+            decision = {
+                "orderId": order["id"],
+                "templateId": order["template_id"],
+                "sellerId": order["owner_id"],
+                "unitPrice": int(order["item_price"]),
+                "quantity": purchase_quantity(order),
+                "totalPrice": purchase_total_price(order),
+            }
             if args.dry_run:
                 decision["dryRun"] = True
             else:
