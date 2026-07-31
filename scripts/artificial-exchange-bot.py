@@ -2160,7 +2160,7 @@ def credit_solaris_inventory(cur, controller_id, amount):
             ),
         )
         cur.execute(
-            "select id, inventory_id, stack_size, position_index, template_id from dune.load_item(%s)",
+            "select * from dune.load_item(%s)",
             (item_id,),
         )
         saved = cur.fetchone()
@@ -2214,7 +2214,7 @@ def credit_solaris_inventory(cur, controller_id, amount):
         (item_id, inventory_id, amount, position_index, int(time.time() * 1000)),
     )
     cur.execute(
-        "select id, inventory_id, stack_size, position_index, template_id from dune.load_item(%s)",
+        "select * from dune.load_item(%s)",
         (item_id,),
     )
     saved = cur.fetchone()
