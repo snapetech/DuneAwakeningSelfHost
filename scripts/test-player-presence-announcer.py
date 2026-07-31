@@ -144,6 +144,98 @@ class PrivateMessageRoutingTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class BaseRecoveryReminderTests(unittest.TestCase):
+    def test_status_requires_owner_and_non_staged_totem(self):
+        module = load_announcer_with_env({
+            "DUNE_ADMIN_BOT_ENV_FILE": "/tmp/dune-announcer-test-missing.env",
+        })
+        captured = {}
+
+        def fake_run(command, timeout=30):
+            captured["command"] = command
+
+            class Result:
+                returncode = 0
+                stdout = "f\tt\tf\tt\n"
+                stderr = ""
+
+            return Result()
+
+        config = {"account_id": 5247, "backup_id": 127, "totem_id": 22323, "message": "recover"}
+        with unittest.mock.patch.object(module, "run", fake_run):
+            status = module.base_recovery_reminder_status(config)
+
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["restored"])
+        self.assertFalse(status["backupExists"])
+        sql = captured["command"][-1]
+        self.assertIn("bb.id = 127", sql)
+        self.assertIn("par.permission_actor_id = 22323", sql)
+        self.assertIn("ps.account_id = 5247", sql)
+
+    def test_reminder_repeats_on_new_session_and_stops_after_restore(self):
+        state = {"onlinePlayers": {}}
+        player = {
+            "name": "Mara Jade Skywalker",
+            "flsId": "MARA_FLS",
+            "lastLoginTime": "2026-07-31 19:00:00+00",
+        }
+        snapshots = [
+            {"5247": dict(player)},
+            {"5247": dict(player)},
+            {"5247": {**player, "lastLoginTime": "2026-08-01 19:00:00+00"}},
+            {"5247": {**player, "lastLoginTime": "2026-08-01 19:00:00+00"}},
+        ]
+        statuses = [
+            {"ok": True, "restored": False, "backupExists": True, "ownerActive": False, "totemBaseBackup": True, "totemExists": True},
+            {"ok": True, "restored": False, "backupExists": True, "ownerActive": False, "totemBaseBackup": True, "totemExists": True},
+            {"ok": True, "restored": False, "backupExists": True, "ownerActive": False, "totemBaseBackup": True, "totemExists": True},
+            {"ok": True, "restored": True, "backupExists": False, "ownerActive": True, "totemBaseBackup": False, "totemExists": True},
+        ]
+        sent = []
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_private_message(target, message, job_id="player-presence-private-message"):
+            sent.append({"target": target, "message": message, "jobId": job_id})
+            return {"ok": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ACCOUNT_ID": "5247",
+            "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_BACKUP_ID": "127",
+            "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_TOTEM_ID": "22323",
+            "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_MESSAGE": "Mara, contact a server admin to recover your base.",
+            "DUNE_PLAYER_PRESENCE_REPO_STAR_THIRD_JOIN_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(player_presence_announcer.os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", lambda: snapshots.pop(0)), \
+             unittest.mock.patch.object(player_presence_announcer, "base_recovery_reminder_status", lambda config: statuses.pop(0)), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+            first = player_presence_announcer.check_once()
+            second = player_presence_announcer.check_once()
+            third = player_presence_announcer.check_once()
+            fourth = player_presence_announcer.check_once()
+
+        self.assertEqual(len(first["baseRecoveryReminderMessages"]), 1)
+        self.assertEqual(second["baseRecoveryReminderMessages"], [])
+        self.assertEqual(len(third["baseRecoveryReminderMessages"]), 1)
+        self.assertEqual(fourth["baseRecoveryReminderMessages"], [])
+        self.assertEqual(len(sent), 2)
+        self.assertNotEqual(sent[0]["jobId"], sent[1]["jobId"])
+        self.assertFalse(state["baseRecoveryReminders"]["5247"]["active"])
+        self.assertIn("restoredAt", state["baseRecoveryReminders"]["5247"])
+
+
 class PublicAnnouncementRoutingTests(unittest.TestCase):
     def test_public_presence_announcement_defaults_to_single_routing_key(self):
         captured = {}

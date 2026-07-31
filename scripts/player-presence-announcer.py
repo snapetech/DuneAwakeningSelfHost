@@ -27,6 +27,10 @@ STARTER_EMOTE_TEMPLATES = (
     "Emote_KaitanBow_01",
 )
 ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stale online activity={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
+BASE_RECOVERY_REMINDER_MESSAGE = (
+    "Mara, your base is preserved in the server's Base Reconstruction Tool backup. "
+    "When you return, please contact a server admin so we can recover it for you."
+)
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
 AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
@@ -206,6 +210,17 @@ def mark_private_delivery_attempt(player, message, job_id):
     }
     save_delivery_state(state)
     return {"duplicate": False, "key": key}
+
+
+def release_private_delivery_attempt(delivery):
+    """Remove a failed delivery marker so the next poll can retry it."""
+    if not delivery or delivery.get("duplicate") or not delivery.get("key"):
+        return
+    state = load_json_file(DELIVERY_FILE, {"deliveries": {}})
+    deliveries = state.setdefault("deliveries", {})
+    if delivery["key"] in deliveries:
+        deliveries.pop(delivery["key"], None)
+        save_delivery_state(state)
 
 
 def online_players():
@@ -1268,6 +1283,7 @@ def private_message(player, message, job_id="player-presence-private-message"):
     name = player_name(player)
     route = whisper_route_for_fls_id(fls_id)
     if not route["ok"]:
+        release_private_delivery_attempt(delivery)
         return {"ok": False, "error": route["error"], "player": name}
     command = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND", env("DUNE_PLAYER_PRESENCE_ANNOUNCE_COMMAND", env("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))))
     if command.startswith("/workspace/"):
@@ -1287,7 +1303,13 @@ def private_message(player, message, job_id="player-presence-private-message"):
     child_env["DUNE_ANNOUNCE_CHAT_ROUTING_KEYS"] = env("DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY", route["routingKey"]) or route["routingKey"]
     child_env["DUNE_ANNOUNCE_CHAT_BIND_ONLINE_QUEUES"] = "false"
     child_env["DUNE_ANNOUNCE_CHAT_CLEANUP_TARGET_BINDINGS"] = "true"
-    result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    try:
+        result = subprocess.run([command, message], cwd=ROOT, env=child_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    except Exception:
+        release_private_delivery_attempt(delivery)
+        raise
+    if result.returncode != 0:
+        release_private_delivery_attempt(delivery)
     return {
         "ok": result.returncode == 0,
         "returncode": result.returncode,
@@ -1298,6 +1320,142 @@ def private_message(player, message, job_id="player-presence-private-message"):
         "stdout": result.stdout[-1000:],
         "stderr": result.stderr[-1000:],
     }
+
+
+def base_recovery_reminder_config():
+    if not env_bool("DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED", False):
+        return None
+
+    values = {}
+    for name in ("ACCOUNT_ID", "BACKUP_ID", "TOTEM_ID"):
+        key = f"DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_{name}"
+        raw = env(key, "").strip()
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key} must be a positive integer") from exc
+        if value <= 0:
+            raise ValueError(f"{key} must be a positive integer")
+        values[name.lower()] = value
+    values["message"] = env("DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_MESSAGE", BASE_RECOVERY_REMINDER_MESSAGE)
+    return values
+
+
+def base_recovery_reminder_status(config):
+    """Return conservative live status for the staged native BRT backup.
+
+    A missing backup alone is not enough to declare success: the original
+    totem must exist, Mara must have an active permission rank on it, and the
+    totem's linked actors must no longer be marked BaseBackup. Query failures
+    deliberately return restored=False so the reminder remains active.
+    """
+    account_id = int(config["account_id"])
+    backup_id = int(config["backup_id"])
+    totem_id = int(config["totem_id"])
+    sql = f"""
+    select
+      exists(
+        select 1
+        from dune.base_backups bb
+        where bb.id = {backup_id}
+      ) as backup_exists,
+      exists(
+        select 1
+        from dune.permission_actor_rank par
+        join dune.player_state ps on ps.player_controller_id = par.player_id
+        where par.permission_actor_id = {totem_id}
+          and ps.account_id = {account_id}
+          and coalesce(par.rank, 0) > 0
+      ) as owner_active,
+      exists(
+        select 1
+        from dune.actor_state ast
+        where ast.actor_id = {totem_id}
+          and ast.state = 'BaseBackup'
+      ) as totem_basebackup,
+      exists(
+        select 1
+        from dune.totems t
+        where t.id = {totem_id}
+      ) as totem_exists;
+    """
+    try:
+        result = run(
+            compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-F", "\t", "-c", sql),
+            timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+        )
+    except Exception as exc:
+        return {"ok": False, "restored": False, "error": str(exc)}
+    if result.returncode != 0:
+        return {"ok": False, "restored": False, "error": result.stderr.strip() or "base recovery status query failed"}
+    fields = result.stdout.strip().split("\t") if result.stdout.strip() else []
+    if len(fields) != 4:
+        return {"ok": False, "restored": False, "error": "base recovery status query returned an unexpected shape"}
+    backup_exists, owner_active, totem_basebackup, totem_exists = [field.lower() == "t" for field in fields]
+    restored = (not backup_exists) and owner_active and totem_exists and not totem_basebackup
+    return {
+        "ok": True,
+        "restored": restored,
+        "backupExists": backup_exists,
+        "ownerActive": owner_active,
+        "totemBaseBackup": totem_basebackup,
+        "totemExists": totem_exists,
+    }
+
+
+def base_recovery_reminder(current, state):
+    """Whisper one recovery reminder per login session until native restore."""
+    results = []
+    try:
+        config = base_recovery_reminder_config()
+    except Exception as exc:
+        return [{"event": "base-recovery-reminder", "ok": False, "error": str(exc)}]
+    if not config:
+        return results
+
+    account_id = str(config["account_id"])
+    reminders = state.setdefault("baseRecoveryReminders", {})
+    entry = reminders.setdefault(account_id, {})
+    status = base_recovery_reminder_status(config)
+    entry["lastStatus"] = status
+    entry["lastStatusCheckedAt"] = now_iso()
+    if status.get("restored") or entry.get("restoredAt"):
+        if status.get("restored") and not entry.get("restoredAt"):
+            entry["restoredAt"] = now_iso()
+        entry["active"] = False
+        return results
+
+    entry["active"] = True
+    player = current.get(account_id)
+    if not player:
+        return results
+    session = player_presence_session(player)
+    if not session:
+        # lastLoginTime is normally populated by the game. If a partial query
+        # omits it, keep a stable marker for this online interval rather than
+        # spamming on every poll.
+        session = f"online:{player_fls_id(player) or account_id}"
+    if entry.get("lastSentSession") == session:
+        return results
+
+    session_key = hashlib.sha256(session.encode("utf-8")).hexdigest()[:16]
+    job_id = f"player-presence-base-recovery-{account_id}-{session_key}"
+    send = private_message(player, config["message"], job_id)
+    result = {
+        "event": "base-recovery-reminder",
+        "accountId": account_id,
+        "player": player_name(player),
+        "session": session,
+        "message": config["message"],
+        "status": status,
+        "send": send,
+    }
+    results.append(result)
+    entry["lastAttemptAt"] = now_iso()
+    if send.get("ok"):
+        entry["lastSentSession"] = session
+        entry["lastSentAt"] = now_iso()
+    return results
 
 
 def private_join_message(player, message):
@@ -1411,6 +1569,7 @@ def send_admin_digest(current, state, template, count, event, extra=None):
 def check_once():
     state = load_state()
     current = online_players()
+    base_recovery_reminder_results = base_recovery_reminder(current, state)
     previous = state.get("onlinePlayers")
     current_ids = set(current)
     previous_ids = set(previous or {})
@@ -2080,6 +2239,7 @@ def check_once():
         "subfiefBonusRepairs": subfief_bonus_results,
         "privateWelcomeMessages": private_welcome_results,
         "automatedPrivateMessages": automated_private_results,
+        "baseRecoveryReminderMessages": base_recovery_reminder_results,
         "starterBaseToolGrants": starter_grant_results,
         "starterBaseToolMessages": starter_message_results,
         "starterEmoteGrants": starter_emote_grant_results,

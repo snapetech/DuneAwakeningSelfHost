@@ -81,6 +81,11 @@ DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE=chat.whispers
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL=Whispers
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY=
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED=false
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ACCOUNT_ID=5247
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_BACKUP_ID=127
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_TOTEM_ID=22323
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_MESSAGE=Mara, your base is preserved in the server's Base Reconstruction Tool backup. When you return, please contact a server admin so we can recover it for you.
 DUNE_PLAYER_PRESENCE_FIRST_SEEN_ENABLED=true
 DUNE_PLAYER_PRESENCE_FIRST_SEEN_TEMPLATE=Welcome to {server_name}. This is a friendly PvE server. Please keep shared paths, spawns, and resources clear. Rules: {rules_url}
 DUNE_PLAYER_PRESENCE_HAGGA_ARRIVAL_ENABLED=true
@@ -168,6 +173,16 @@ The private welcome path runs on every detected join for existing and new player
 ```text
 Welcome! Please check {rules_url} for server rules.
 ```
+
+The optional base-recovery reminder targets one account and uses the verified
+Paul whisper route. When enabled, it sends one private reminder for each
+distinct `lastLoginTime` session while the configured native BRT backup is
+still staged. The poll checks the live database on every cycle and stops only
+when that backup is gone, the totem exists with an active owner permission for
+the target account, and the totem is no longer marked `BaseBackup`. A failed
+status query leaves the reminder active; a failed whisper is retried on the
+next poll. Keep the account, backup, and totem ids bound to the same recovery
+receipt.
 
 Automated private messages are derived from local state and operator config rather than hard-coded server details. These use the private helper and should render as whispers/private messages:
 
