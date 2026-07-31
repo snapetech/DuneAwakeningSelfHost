@@ -112,7 +112,8 @@ def scan(query, limit=500, totem_id=None):
           from dune.totems t
           join lateral (
             select min(link.entity_id) as owner_entity_id,count(*) as fgl_entity_count
-            from dune.actor_fgl_entities link where link.actor_id=t.id
+            from dune.actor_fgl_entities link
+            where link.actor_id=t.id and link.slot_name='Actor'
           ) afe on afe.fgl_entity_count>0
           join dune.actors a on a.id=t.id
           left join dune.permission_actor pa on pa.actor_id=t.id
@@ -302,7 +303,7 @@ def archive(connect_fn, backup_fn, receipt_root, *, totem_id, recovery_player_id
                 raise ValueError("base totem was not found")
             cursor.execute("select id from dune.actors where id=%s for update", (totem_id,))
             cursor.execute("select wp.partition_id from dune.actors a join dune.world_partition wp on wp.partition_id=a.partition_id where a.id=%s for update of wp", (totem_id,))
-            cursor.execute("select entity_id from dune.actor_fgl_entities where actor_id=%s for update", (totem_id,))
+            cursor.execute("select entity_id from dune.actor_fgl_entities where actor_id=%s and slot_name='Actor' for update", (totem_id,))
             owner_row = cursor.fetchone()
             if owner_row is None:
                 raise ValueError("base totem has no FGL owner entity")
