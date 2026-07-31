@@ -770,12 +770,16 @@ it attempted to set `player_virtual_currency_balances.balance` to `NULL` and
 failed a not-null constraint. In rollback testing it also showed it could delete
 the claim row without crediting when the base Solaris row was missing.
 
-The bot uses a direct validated transaction for seller Solari claims:
+The bot uses a direct validated transaction for seller Solari claims. Seller
+proceeds are credited as a carried `SolarisCoin` inventory stack, which is the
+player-visible path used by the game client:
 
-- create missing base Solaris row at balance `0`
+- resolve and lock the seller's carried inventory (`inventory_type=0`)
+- merge into an existing `SolarisCoin` stack or allocate a free carried slot
+- save the item through `dune.save_item` and verify the persisted item/stack
 - lock the completed seller claim
 - verify owner, completion type, item id, stack size, and expected Solari
-- credit exactly `item_price * stack_size`
+- credit exactly `item_price * stack_size` as inventory SolarisCoin
 - delete the completed claim order
 - verify the claim row is gone
 - commit only if every check passes
