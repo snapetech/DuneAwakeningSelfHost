@@ -363,6 +363,7 @@ class StarterEmoteGrantTests(unittest.TestCase):
         self.assertEqual(state["starterEmotesGranted"], ["123"])
         self.assertEqual(sent, [])
 
+
     def test_starter_emote_templates_are_configurable(self):
         file_env = {
             "DUNE_PLAYER_PRESENCE_STARTER_EMOTE_TEMPLATES": " Emote_A , Emote_B ,, ",
@@ -658,6 +659,54 @@ class StarterEmoteGrantTests(unittest.TestCase):
         self.assertEqual(sent, [])
         self.assertEqual(state.get("pendingLeaves", {}), {})
         self.assertEqual(state.get("recentLeaves", {}), {})
+
+
+class StarterBaseToolGrantTests(unittest.TestCase):
+    def test_online_join_is_queued_until_player_is_offline(self):
+        snapshots = [
+            {"123": {"name": "FirstTimer", "flsId": "FIRST_FLS"}},
+            {},
+        ]
+        state = {
+            "onlinePlayers": {},
+            "seenAccounts": [],
+        }
+        grants = []
+
+        def fake_online_players():
+            return snapshots.pop(0)
+
+        def fake_save_state(next_state):
+            state.clear()
+            state.update(next_state)
+
+        def fake_grant(account_id):
+            grants.append(str(account_id))
+            return {"ok": True, "accountId": str(account_id), "granted": True}
+
+        file_env = {
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED": "true",
+            "DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_ANNOUNCE_ENABLED": "false",
+            "DUNE_PLAYER_PRESENCE_TRANSFER_GRACE_SECONDS": "0",
+            "DUNE_PLAYER_PRESENCE_ADMIN_FIRST_LOGIN_DAILY_ENABLED": "false",
+        }
+
+        with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+             unittest.mock.patch.dict(os.environ, {}, clear=True), \
+             unittest.mock.patch.object(player_presence_announcer, "online_players", fake_online_players), \
+             unittest.mock.patch.object(player_presence_announcer, "load_state", lambda: state.copy()), \
+             unittest.mock.patch.object(player_presence_announcer, "save_state", fake_save_state), \
+             unittest.mock.patch.object(player_presence_announcer, "grant_starter_base_tool", fake_grant):
+            first = player_presence_announcer.check_once()
+            second = player_presence_announcer.check_once()
+
+        self.assertEqual(grants, ["123"])
+        self.assertEqual(first["starterBaseToolGrants"], [])
+        self.assertEqual(second["starterBaseToolGrants"][0]["accountId"], "123")
+        self.assertEqual(state["starterBaseToolGranted"], ["123"])
+        self.assertEqual(state["starterBaseToolPending"], {})
 
 
 class DeepDesertJoinMessageTests(unittest.TestCase):

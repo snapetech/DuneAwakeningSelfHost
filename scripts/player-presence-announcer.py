@@ -727,7 +727,7 @@ def grant_starter_base_tool(account_id):
     preferred_inventory_type = int(env("DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_INVENTORY_TYPE", "0"))
     sql = f"""
     with player as (
-      select account_id, character_name, player_pawn_id, player_controller_id
+      select account_id, character_name, player_pawn_id, player_controller_id, online_status::text as online_status
       from dune.player_state
       where account_id = {int(account_id)}
       limit 1
@@ -747,7 +747,9 @@ def grant_starter_base_tool(account_id):
     candidate_inventories as (
       select inv.inventory_id, inv.inventory_type, inv.max_item_count
       from owned_inventories inv
-      where not exists (select 1 from existing)
+      join player p on true
+      where p.online_status = 'Offline'
+        and not exists (select 1 from existing)
       order by
         case when inv.inventory_type = {preferred_inventory_type} then 0 else 1 end,
         case when inv.max_item_count is null or inv.max_item_count < 0 then 1 else 0 end,
@@ -798,7 +800,7 @@ def grant_starter_base_tool(account_id):
         target.position_index,
         {sql_literal(template_id)},
         true,
-        (extract(epoch from now()))::bigint,
+        (extract(epoch from now()) * 1000)::bigint,
         '{{}}'::jsonb,
         0,
         null
@@ -819,8 +821,10 @@ def grant_starter_base_tool(account_id):
       'inventoryId', coalesce((select inventory_id from saved), (select inventory_id from existing)),
       'inventoryType', (select inventory_type from saved),
       'positionIndex', (select position_index from saved),
+      'deferred', coalesce((select online_status from player) <> 'Offline', false),
       'error', case
         when not exists(select 1 from player) then 'player not found'
+        when (select online_status from player) <> 'Offline' and not exists(select 1 from existing) then 'player is online; retry after logoff'
         when exists(select 1 from existing) then null
         when not exists(select 1 from target) then 'no empty owned inventory slot'
         else null
@@ -1644,25 +1648,47 @@ def check_once():
     if env_bool("DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_ENABLED", True) and not first_run:
         granted = state.setdefault("starterBaseToolGranted", [])
         granted_ids = set(str(account_id) for account_id in granted)
+        pending = state.setdefault("starterBaseToolPending", {})
+        if isinstance(pending, list):
+            pending = {str(account_id): {"queuedAt": current_time} for account_id in pending}
+        pending = {str(account_id): dict(value) if isinstance(value, dict) else {"queuedAt": current_time} for account_id, value in pending.items()}
+        retry_seconds = max(15, int(env("DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_RETRY_SECONDS", "60")))
         message_enabled = env_bool("DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_ENABLED", True)
         message_template = env("DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_MESSAGE_TEMPLATE", STARTER_BASE_TOOL_MESSAGE)
+
+        # Queue new players while they are online. Direct item writes during an
+        # active session can be overwritten by the game's later persistence save.
         for account_id in joined:
-            if str(account_id) in granted_ids:
+            key = str(account_id)
+            if key not in granted_ids and key not in pending:
+                pending[key] = {"queuedAt": current_time}
+
+        # Retry queued grants only after the player is offline. This also repairs
+        # a failed first attempt without re-granting accounts already marked as
+        # complete.
+        for key, entry in sorted(pending.items()):
+            if key in current_ids:
                 continue
-            result = grant_starter_base_tool(account_id)
-            starter_grant_results.append({"event": "starter-base-tool", "accountId": account_id, "grant": result})
+            last_attempt = int(entry.get("lastAttemptAt") or 0)
+            if last_attempt and current_time - last_attempt < retry_seconds:
+                continue
+            entry["lastAttemptAt"] = current_time
+            result = grant_starter_base_tool(key)
+            starter_grant_results.append({"event": "starter-base-tool", "accountId": key, "grant": result})
             if result.get("ok"):
-                granted_ids.add(str(account_id))
+                granted_ids.add(key)
+                pending.pop(key, None)
+                # The player is offline by design here; the item will be visible
+                # on the next login, so do not emit a misleading live whisper.
                 if message_enabled:
-                    player = current.get(account_id, account_id)
-                    message = render_template(message_template, player_name(player), final_count)
                     starter_message_results.append({
                         "event": "starter-base-tool-message",
-                        "accountId": account_id,
-                        "message": message,
-                        "send": private_join_message(player, message),
+                        "accountId": key,
+                        "message": render_template(message_template, key, final_count),
+                        "send": {"ok": True, "skipped": True, "reason": "player offline; item available on next login"},
                     })
         state["starterBaseToolGranted"] = sorted(granted_ids, key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
+        state["starterBaseToolPending"] = pending
 
     starter_emote_grant_results = []
     if env_bool("DUNE_PLAYER_PRESENCE_STARTER_EMOTES_ENABLED", True) and not first_run:

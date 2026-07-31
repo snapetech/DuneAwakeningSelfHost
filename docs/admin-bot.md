@@ -213,7 +213,7 @@ For the full private/global routing matrix, command-reply behavior, and RabbitMQ
 
 Admin-private recipients are derived from currently online players whose character name or FLS id matches `DUNE_PLAYER_PRESENCE_ADMIN_NAMES` / `DUNE_PLAYER_PRESENCE_ADMIN_FLS_IDS`. Keep real admin identifiers in private `.env`, not in committed examples or docs. Digest entries are stored in `backups/admin-bot/player-presence.json` under `adminDigestLog`, and the admin panel exposes them on the Admin Digests tab.
 
-The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. When the grant succeeds, it sends a private message telling the player they may need to log out and back in before the item appears.
+The starter Base Reconstruction Tool path grants one `BaseBackupTool` to each newly observed joining account that has not already been recorded in `backups/admin-bot/player-presence.json`. The grant is queued while the player is online and committed only after the player is offline; writing a live player's inventory directly can be overwritten by the game's persistence snapshot during logout. A failed or deferred grant remains pending and is retried after `DUNE_PLAYER_PRESENCE_STARTER_BASE_TOOL_RETRY_SECONDS` (default `60`). When the grant succeeds, the state records it and the item is available on the next login. The private message is recorded as skipped while the player is offline rather than falsely claiming a live delivery.
 
 ## DD1 BRT Chat Commands
 
