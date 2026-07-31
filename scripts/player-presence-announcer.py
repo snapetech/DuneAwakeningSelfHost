@@ -12,6 +12,7 @@ import sys
 import time
 
 from dune_whisper_route import whisper_route_for_fls_id
+import base_recovery_reminders
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -27,10 +28,7 @@ STARTER_EMOTE_TEMPLATES = (
     "Emote_KaitanBow_01",
 )
 ADMIN_ANOMALY_DIGEST_TEMPLATE = "Admin digest: stale online activity={stuck_count} ({stuck_names}); over base cap={over_base_cap}."
-BASE_RECOVERY_REMINDER_MESSAGE = (
-    "Mara, your base is preserved in the server's Base Reconstruction Tool backup. "
-    "When you return, please contact a server admin so we can recover it for you."
-)
+BASE_RECOVERY_REMINDER_MESSAGE = base_recovery_reminders.DEFAULT_MESSAGE
 RESTART_STATE_FILE = ROOT / "backups" / "admin-panel" / "restart-jobs.json"
 ANNOUNCEMENT_STATE_FILE = ROOT / "backups" / "admin-panel" / "announcements.json"
 AUDIT_FILE = ROOT / "backups" / "admin-panel" / "audit.jsonl"
@@ -1322,7 +1320,7 @@ def private_message(player, message, job_id="player-presence-private-message"):
     }
 
 
-def base_recovery_reminder_config():
+def legacy_base_recovery_reminder_config():
     if not env_bool("DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED", False):
         return None
 
@@ -1336,8 +1334,9 @@ def base_recovery_reminder_config():
             raise ValueError(f"{key} must be a positive integer") from exc
         if value <= 0:
             raise ValueError(f"{key} must be a positive integer")
-        values[name.lower()] = value
+        values[{"ACCOUNT_ID": "accountId", "BACKUP_ID": "backupId", "TOTEM_ID": "totemId"}[name]] = value
     values["message"] = env("DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_MESSAGE", BASE_RECOVERY_REMINDER_MESSAGE)
+    values["enabled"] = True
     return values
 
 
@@ -1349,36 +1348,7 @@ def base_recovery_reminder_status(config):
     totem's linked actors must no longer be marked BaseBackup. Query failures
     deliberately return restored=False so the reminder remains active.
     """
-    account_id = int(config["account_id"])
-    backup_id = int(config["backup_id"])
-    totem_id = int(config["totem_id"])
-    sql = f"""
-    select
-      exists(
-        select 1
-        from dune.base_backups bb
-        where bb.id = {backup_id}
-      ) as backup_exists,
-      exists(
-        select 1
-        from dune.permission_actor_rank par
-        join dune.player_state ps on ps.player_controller_id = par.player_id
-        where par.permission_actor_id = {totem_id}
-          and ps.account_id = {account_id}
-          and coalesce(par.rank, 0) > 0
-      ) as owner_active,
-      exists(
-        select 1
-        from dune.actor_state ast
-        where ast.actor_id = {totem_id}
-          and ast.state = 'BaseBackup'
-      ) as totem_basebackup,
-      exists(
-        select 1
-        from dune.totems t
-        where t.id = {totem_id}
-      ) as totem_exists;
-    """
+    sql = base_recovery_reminders.status_sql(config)
     try:
         result = run(
             compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-F", "\t", "-c", sql),
@@ -1388,73 +1358,71 @@ def base_recovery_reminder_status(config):
         return {"ok": False, "restored": False, "error": str(exc)}
     if result.returncode != 0:
         return {"ok": False, "restored": False, "error": result.stderr.strip() or "base recovery status query failed"}
-    fields = result.stdout.strip().split("\t") if result.stdout.strip() else []
-    if len(fields) != 4:
-        return {"ok": False, "restored": False, "error": "base recovery status query returned an unexpected shape"}
-    backup_exists, owner_active, totem_basebackup, totem_exists = [field.lower() == "t" for field in fields]
-    restored = (not backup_exists) and owner_active and totem_exists and not totem_basebackup
-    return {
-        "ok": True,
-        "restored": restored,
-        "backupExists": backup_exists,
-        "ownerActive": owner_active,
-        "totemBaseBackup": totem_basebackup,
-        "totemExists": totem_exists,
-    }
+    return base_recovery_reminders.parse_status_output(result.stdout)
+
+
+def configured_base_recovery_reminders():
+    configured_path = env("DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDERS_FILE", "").strip()
+    path = base_recovery_reminders.registry_path(configured_path or None)
+    if path.exists():
+        return base_recovery_reminders.list_reminders(path)
+    legacy = legacy_base_recovery_reminder_config()
+    return [legacy] if legacy else []
 
 
 def base_recovery_reminder(current, state):
     """Whisper one recovery reminder per login session until native restore."""
     results = []
     try:
-        config = base_recovery_reminder_config()
+        reminders = configured_base_recovery_reminders()
     except Exception as exc:
         return [{"event": "base-recovery-reminder", "ok": False, "error": str(exc)}]
-    if not config:
-        return results
+    runtime = state.setdefault("baseRecoveryReminders", {})
+    for config in reminders:
+        account_id = str(config["accountId"])
+        entry = runtime.setdefault(account_id, {})
+        fingerprint = base_recovery_reminders.config_fingerprint(config)
+        if entry.get("configFingerprint") != fingerprint:
+            entry.clear()
+            entry["configFingerprint"] = fingerprint
+        status = base_recovery_reminder_status(config)
+        entry["lastStatus"] = status
+        entry["lastStatusCheckedAt"] = now_iso()
+        if status.get("restored") or entry.get("restoredAt"):
+            if status.get("restored") and not entry.get("restoredAt"):
+                entry["restoredAt"] = now_iso()
+            entry["active"] = False
+            continue
 
-    account_id = str(config["account_id"])
-    reminders = state.setdefault("baseRecoveryReminders", {})
-    entry = reminders.setdefault(account_id, {})
-    status = base_recovery_reminder_status(config)
-    entry["lastStatus"] = status
-    entry["lastStatusCheckedAt"] = now_iso()
-    if status.get("restored") or entry.get("restoredAt"):
-        if status.get("restored") and not entry.get("restoredAt"):
-            entry["restoredAt"] = now_iso()
-        entry["active"] = False
-        return results
+        entry["active"] = True
+        player = current.get(account_id)
+        if not player:
+            continue
+        session = player_presence_session(player)
+        if not session:
+            # lastLoginTime is normally populated by the game. If a partial
+            # query omits it, keep a stable marker for this online interval.
+            session = f"online:{player_fls_id(player) or account_id}"
+        if entry.get("lastSentSession") == session:
+            continue
 
-    entry["active"] = True
-    player = current.get(account_id)
-    if not player:
-        return results
-    session = player_presence_session(player)
-    if not session:
-        # lastLoginTime is normally populated by the game. If a partial query
-        # omits it, keep a stable marker for this online interval rather than
-        # spamming on every poll.
-        session = f"online:{player_fls_id(player) or account_id}"
-    if entry.get("lastSentSession") == session:
-        return results
-
-    session_key = hashlib.sha256(session.encode("utf-8")).hexdigest()[:16]
-    job_id = f"player-presence-base-recovery-{account_id}-{session_key}"
-    send = private_message(player, config["message"], job_id)
-    result = {
-        "event": "base-recovery-reminder",
-        "accountId": account_id,
-        "player": player_name(player),
-        "session": session,
-        "message": config["message"],
-        "status": status,
-        "send": send,
-    }
-    results.append(result)
-    entry["lastAttemptAt"] = now_iso()
-    if send.get("ok"):
-        entry["lastSentSession"] = session
-        entry["lastSentAt"] = now_iso()
+        session_key = hashlib.sha256(session.encode("utf-8")).hexdigest()[:16]
+        job_id = f"player-presence-base-recovery-{account_id}-{session_key}"
+        send = private_message(player, config["message"], job_id)
+        result = {
+            "event": "base-recovery-reminder",
+            "accountId": account_id,
+            "player": player_name(player),
+            "session": session,
+            "message": config["message"],
+            "status": status,
+            "send": send,
+        }
+        results.append(result)
+        entry["lastAttemptAt"] = now_iso()
+        if send.get("ok"):
+            entry["lastSentSession"] = session
+            entry["lastSentAt"] = now_iso()
     return results
 
 

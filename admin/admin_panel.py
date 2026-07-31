@@ -90,6 +90,7 @@ import env_file_store
 import feature_readiness
 import feature_readiness_history
 import credential_lifecycle
+import base_recovery_reminders
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -421,6 +422,8 @@ BASE_CREATOR_ENABLED = os.environ.get("DUNE_BASE_CREATOR_ENABLED", "true").lower
 BASE_GALLERY_DATABASE = pathlib.Path(os.environ.get("DUNE_BASE_GALLERY_DATABASE", str(BACKUPS_ROOT / "base-gallery" / "gallery.sqlite3")))
 BASE_RETIREMENT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BASE_RETIREMENT_RECEIPTS = BACKUP_ROOT / "base-retirement"
+BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CONFIRM_BASE_RECOVERY_REMINDER = "REMOVE BASE RECOVERY REMINDER"
 BASE_COOLDOWN_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_COOLDOWN_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BASE_COOLDOWN_RECEIPTS = BACKUP_ROOT / "base-cooldown"
 GAMEPLAY_PRESETS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESETS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -532,17 +535,27 @@ CHANGE_INTELLIGENCE_DATABASE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIG
 CHANGE_INTELLIGENCE_SECRET_FILE = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE", str(CONFIG_ROOT / "secrets" / "change-intelligence-hmac.secret")))
 CHANGE_INTELLIGENCE_EVIDENCE_ROOT = pathlib.Path(os.environ.get("DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR", str(BACKUPS_ROOT / "operator-evidence")))
 RESPONSE_DRILLS_ENABLED = os.environ.get("DUNE_RESPONSE_DRILLS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES = max(
+    1 * 1024 * 1024,
+    min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES", str(64 * 1024 * 1024))), 512 * 1024 * 1024),
+)
 CHANGE_INTELLIGENCE_STORE = None
 CHANGE_INTELLIGENCE_STORE_LOCK = threading.Lock()
 CHANGE_INTELLIGENCE_RUNTIME = {"ready": False, "imported": 0, "duplicates": 0, "importErrors": 0, "reconciled": 0, "lastEventAt": None, "lastEventId": None, "lastError": ""}
 CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS = max(1, min(int(os.environ.get("DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS", "60")), 300))
 CHANGE_INTELLIGENCE_STATUS_CACHE = {"value": None, "updatedAt": 0.0}
 CHANGE_INTELLIGENCE_STATUS_CACHE_LOCK = threading.Lock()
+# Full change-intelligence metrics call Store.status(), which verifies every
+# retained event's HMAC chain. Keep that expensive operation off the request
+# path once the retained ledger exceeds this bounded size; the verified
+# operator API remains available for deliberate reads.
+CHANGE_INTELLIGENCE_METRICS_MAX_DATABASE_BYTES = 32 * 1024 * 1024
 METRICS_DOCUMENT_CACHE_SECONDS = max(0, min(int(os.environ.get("DUNE_ADMIN_METRICS_CACHE_SECONDS", "60")), 300))
+METRICS_DOCUMENT_CACHE_WAIT_SECONDS = 1.0
 METRICS_DOCUMENT_CACHE = {}
 METRICS_DOCUMENT_CACHE_LOCK = threading.Lock()
 METRICS_DOCUMENT_CACHE_CONDITION = threading.Condition(METRICS_DOCUMENT_CACHE_LOCK)
-METRICS_DOCUMENT_CACHE_RUNTIME = {"hits": 0, "misses": 0, "staleHits": 0, "waits": 0}
+METRICS_DOCUMENT_CACHE_RUNTIME = {"hits": 0, "misses": 0, "staleHits": 0, "waits": 0, "deferred": 0}
 OPERATIONS_BRIEFING_ENABLED = os.environ.get("DUNE_OPERATIONS_BRIEFING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 OPERATIONS_BRIEFING_POLL_SECONDS = max(60, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_POLL_SECONDS", "300")), 86400))
 OPERATIONS_BRIEFING_REFRESH_HOURS = max(1, min(int(os.environ.get("DUNE_OPERATIONS_BRIEFING_REFRESH_HOURS", "24")), 720))
@@ -667,6 +680,7 @@ AUDIT_LEDGER_LOCK = threading.Lock()
 AUDIT_RECONCILIATION_LOCK = threading.Lock()
 AUDIT_LEDGER_STORE = None
 AUDIT_LEDGER_RUNTIME = {"ready": False, "lastError": "", "lastAppendAt": None, "lastSequence": 0}
+AUDIT_LEDGER_METRICS_MAX_DATABASE_BYTES = 32 * 1024 * 1024
 CHANGE_CONTRACT_RUNTIME = {"issued": 0, "admitted": 0, "refused": 0, "lastIssuedAt": None, "lastAdmittedAt": None, "lastRefusalAt": None, "lastError": ""}
 
 
@@ -684,7 +698,7 @@ def admin_audit_ledger():
         return AUDIT_LEDGER_STORE
 
 
-def audit_ledger_public_status():
+def audit_ledger_public_status(force=False):
     if not AUDIT_LEDGER_ENABLED:
         return {
             "ok": True,
@@ -694,6 +708,28 @@ def audit_ledger_public_status():
             "requests": {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []},
             "runtime": dict(AUDIT_LEDGER_RUNTIME),
         }
+    try:
+        if not force and AUDIT_LEDGER_DATABASE.is_file() and AUDIT_LEDGER_DATABASE.stat().st_size > AUDIT_LEDGER_METRICS_MAX_DATABASE_BYTES:
+            return {
+                "ok": False,
+                "enabled": True,
+                "requiredForMutations": AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS,
+                "statusDeferred": True,
+                "ledger": {"ok": False, "events": 0, "headSequence": 0, "headHmacSha256": ""},
+                "requests": {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []},
+                "runtime": dict(AUDIT_LEDGER_RUNTIME),
+            }
+    except OSError:
+        if not force:
+            return {
+                "ok": False,
+                "enabled": True,
+                "requiredForMutations": AUDIT_LEDGER_REQUIRED_FOR_MUTATIONS,
+                "statusDeferred": True,
+                "ledger": {"ok": False, "events": 0, "headSequence": 0, "headHmacSha256": ""},
+                "requests": {"admitted": 0, "completed": 0, "reconciled": 0, "open": 0, "oldestOpenAgeSeconds": 0, "openRequests": []},
+                "runtime": dict(AUDIT_LEDGER_RUNTIME),
+            }
     try:
         status = admin_audit_ledger().status()
         AUDIT_LEDGER_RUNTIME.update({"ready": bool(status["ok"]), "lastError": status.get("error") or ""})
@@ -718,7 +754,15 @@ def audit_ledger_prometheus():
     if not AUDIT_LEDGER_ENABLED:
         return "dash_admin_audit_ledger_enabled 0\ndash_admin_audit_ledger_valid 1\n"
     try:
-        return admin_audit_ledger().prometheus(enabled=True)
+        store = admin_audit_ledger()
+        cached = store._cached_verification()
+        if cached is None and AUDIT_LEDGER_DATABASE.is_file() and AUDIT_LEDGER_DATABASE.stat().st_size > AUDIT_LEDGER_METRICS_MAX_DATABASE_BYTES:
+            return (
+                "dash_admin_audit_ledger_enabled 1\n"
+                "dash_admin_audit_ledger_valid 0\n"
+                "dash_admin_audit_ledger_metrics_deferred 1\n"
+            )
+        return store.prometheus(enabled=True)
     except Exception:
         return "dash_admin_audit_ledger_enabled 1\ndash_admin_audit_ledger_valid 0\n"
 
@@ -2109,6 +2153,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_DESIRED_STATE_POLL_SECONDS": {"group": "Desired State", "secret": False, "restart": True, "why": "Continuous file/runtime attestation cadence from 15 to 3600 seconds."},
     "DUNE_CHANGE_INTELLIGENCE_ENABLED": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Records a tamper-evident operational timeline and correlates incidents with preceding changes."},
     "DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Single-flight reuse window for a verified ledger status and correlation view; artifact changes invalidate the integrity cache."},
+    "DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Bounded startup byte budget for importing rotated audit JSONL into the change timeline; default 64 MiB."},
     "DUNE_ADMIN_METRICS_CACHE_SECONDS": {"group": "Metrics", "secret": False, "restart": True, "why": "Reuse window for expensive label-safe metrics documents, bounded to 0–300 seconds; live autoscaler safety gauges bypass it."},
     "DUNE_CHANGE_INTELLIGENCE_POLICY": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Versioned event bounds, classification, impact, and correlation windows."},
     "DUNE_CHANGE_INTELLIGENCE_DATABASE": {"group": "Change Intelligence", "secret": False, "restart": True, "why": "Private append-only HMAC-chained operational event ledger."},
@@ -2183,6 +2228,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_BASE_CREATOR_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Enables read-only live-base exports and the isolated portable design gallery."},
     "DUNE_BASE_GALLERY_DATABASE": {"group": "Creator", "secret": False, "restart": True, "why": "Dedicated SQLite design/gallery/rating state path; never point this at the game database."},
     "DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for preview-bound, full-backup-first native base retirement into the game's recoverable base-backup system."},
+    "DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for adding, replacing, and removing persistent player base-recovery reminder records."},
     "DUNE_ADMIN_BASE_COOLDOWN_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for stopped-map, fingerprint-bound, full-backup-first base pack-up cooldown reset."},
     "DUNE_GAMEPLAY_PRESETS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Loads the validated worm, threat, storm, harvest, day, hydration, and world preset catalog."},
     "DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Second gate for backup-first preset apply and rollback. Preview remains available."},
@@ -2196,6 +2242,12 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_SERVER_COMMANDS_AUTH_TOKEN": {"group": "Secrets", "secret": True, "restart": True, "why": "Shared token used by game maps to authenticate native Version 2 server-command notifications."},
     "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": {"group": "Announcements", "secret": False, "restart": False, "why": "Enables one private message-of-the-day delivery for each detected player login session."},
     "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE": {"group": "Announcements", "secret": False, "restart": False, "why": "Message-of-the-day text; supports player-presence template fields such as {playername}, {count}, {server_name}, and {rules_url}."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDERS_FILE": {"group": "Announcements", "secret": False, "restart": False, "why": "Durable JSON registry of account, native BRT backup, totem, and per-login recovery reminders shared by the CLI, announcer, and admin panel."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder compatibility switch; once the durable registry exists, registry records take precedence."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ACCOUNT_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder account id used only when the durable registry file does not yet exist."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_BACKUP_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder native Base Reconstruction Tool backup id."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_TOTEM_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder base totem id used for conservative restore detection."},
+    "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_MESSAGE": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder private message text; registry records may override it per player."},
     "DUNE_BOT_API_TOKEN": {"group": "Secrets", "secret": True, "restart": True, "why": "Bearer credential shared only with the Discord bot adapter client."},
     "DUNE_BOT_API_TOKEN_FILE": {"group": "Discord", "secret": False, "restart": True, "why": "Optional file containing the Discord adapter bearer credential; takes precedence over the env value."},
     "DUNE_DISCORD_BOT_TOKEN": {"group": "Secrets", "secret": True, "restart": False, "why": "Discord application bot token used only by the host-side first-party slash-command service."},
@@ -2711,11 +2763,40 @@ def read_restart_state():
     return state
 
 
+def read_base_recovery_reminders(state=None):
+    state = state if isinstance(state, dict) else {}
+    try:
+        registry_file = base_recovery_reminders.registry_path()
+        reminders = base_recovery_reminders.list_reminders()
+        rows = base_recovery_reminders.merge_runtime(reminders, state)
+        try:
+            display_path = str(registry_file.relative_to(ROOT))
+        except ValueError:
+            display_path = str(registry_file)
+        return {
+            "ok": True,
+            "path": display_path,
+            "reminders": rows,
+            "mutationEnabled": bool(MUTATIONS_ENABLED and BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED),
+            "confirmPhrase": CONFIRM_BASE_RECOVERY_REMINDER,
+        }
+    except (OSError, ValueError) as exc:
+        return {
+            "ok": False,
+            "path": str(base_recovery_reminders.registry_path()),
+            "reminders": [],
+            "mutationEnabled": False,
+            "confirmPhrase": CONFIRM_BASE_RECOVERY_REMINDER,
+            "error": str(exc)[:1000],
+        }
+
+
 def read_admin_digest_state():
     try:
         state = json.loads(ADMIN_DIGEST_STATE_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         state = {}
+    reminder_state = read_base_recovery_reminders(state)
     return {
         "path": str(ADMIN_DIGEST_STATE_FILE.relative_to(ROOT)),
         "updatedAt": state.get("updatedAt"),
@@ -2727,6 +2808,11 @@ def read_admin_digest_state():
             key: value for key, value in state.items()
             if key.startswith("lastAdmin") or key in ("lastDailyStatusAt", "lastMaintenanceCancelScanAt")
         },
+        "baseRecoveryReminders": reminder_state.get("reminders", []),
+        "baseRecoveryReminderPath": reminder_state.get("path"),
+        "baseRecoveryReminderMutationEnabled": reminder_state.get("mutationEnabled", False),
+        "baseRecoveryReminderConfirm": reminder_state.get("confirmPhrase", CONFIRM_BASE_RECOVERY_REMINDER),
+        "baseRecoveryReminderError": reminder_state.get("error"),
     }
 
 
@@ -7371,11 +7457,20 @@ def metrics_document_cache_get(name, now=None):
                     METRICS_DOCUMENT_CACHE_RUNTIME["staleHits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("staleHits") or 0) + 1
                     return value
                 METRICS_DOCUMENT_CACHE_RUNTIME["waits"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("waits") or 0) + 1
-                METRICS_DOCUMENT_CACHE_CONDITION.wait(timeout=30)
+                METRICS_DOCUMENT_CACHE_CONDITION.wait(timeout=METRICS_DOCUMENT_CACHE_WAIT_SECONDS)
                 now = time.monotonic()
                 entry = METRICS_DOCUMENT_CACHE.get(name) or {}
-                if entry.get("building") and now - float(entry.get("buildingAt") or 0) >= 30:
-                    entry["building"] = False
+                if entry.get("building"):
+                    # A first document can require a full retained-ledger read.
+                    # Do not let every concurrent Prometheus scrape occupy an
+                    # admin request thread while that one builder runs.
+                    building_age = now - float(entry.get("buildingAt") or 0)
+                    if building_age >= 30:
+                        entry["building"] = False
+                    else:
+                        METRICS_DOCUMENT_CACHE_RUNTIME["deferred"] = int(METRICS_DOCUMENT_CACHE_RUNTIME.get("deferred") or 0) + 1
+                        safe_name = re.sub(r"[^a-zA-Z0-9_]+", "_", name)[:64] or "unknown"
+                        return f'dash_admin_metrics_document_deferred{{document="{safe_name}"}} 1\n'
                 continue
             entry["building"] = True
             entry["buildingAt"] = now
@@ -7408,6 +7503,52 @@ def metrics_document_cache_prometheus():
         f"dash_admin_metrics_document_cache_misses_total {misses}\n"
         f"dash_admin_metrics_document_cache_stale_hits_total {stale_hits}\n"
         f"dash_admin_metrics_document_cache_waits_total {waits}\n"
+        f"dash_admin_metrics_document_cache_deferred_total {int(METRICS_DOCUMENT_CACHE_RUNTIME.get('deferred') or 0)}\n"
+    )
+
+
+def change_intelligence_metrics_status():
+    """Return a verified status only when its retained ledger is bounded.
+
+    Prometheus must never be able to monopolize the admin request pool while
+    ``Store.status`` walks and verifies a large append-only ledger. A large
+    ledger gets a lightweight deferred metric instead; the authenticated
+    operator endpoint still exposes the full verified status on demand.
+    """
+    if not CHANGE_INTELLIGENCE_ENABLED:
+        return {"ok": False, "enabled": False, "state": "disabled"}
+    try:
+        if retained_metrics_should_defer():
+            return None
+    except OSError:
+        return None
+    return change_intelligence_public_status()
+
+
+def retained_metrics_should_defer():
+    for path in (CHANGE_INTELLIGENCE_DATABASE, AUDIT_LEDGER_DATABASE):
+        try:
+            if path.is_file() and path.stat().st_size > CHANGE_INTELLIGENCE_METRICS_MAX_DATABASE_BYTES:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def deferred_change_intelligence_metrics():
+    return (
+        "# HELP dash_change_intelligence_collector_up Change timeline metrics are deferred while the retained ledger is large.\n"
+        "# TYPE dash_change_intelligence_collector_up gauge\n"
+        "dash_change_intelligence_collector_up 0\n"
+        "dash_change_intelligence_metrics_deferred 1\n"
+    )
+
+
+def deferred_audit_ledger_metrics():
+    return (
+        "dash_admin_audit_ledger_enabled 1\n"
+        "dash_admin_audit_ledger_valid 0\n"
+        "dash_admin_audit_ledger_metrics_deferred 1\n"
     )
 
 
@@ -9776,12 +9917,31 @@ def change_intelligence_import_history():
     limit = store.policy["historyImportLimit"]
     rows = collections.deque(maxlen=limit)
     errors = 0
-    paths = sorted(BACKUP_ROOT.glob("*-audit.jsonl"))
+    paths = list(BACKUP_ROOT.glob("*-audit.jsonl"))
     if AUDIT_LOG.is_file():
         paths.append(AUDIT_LOG)
-    for path in paths:
+    candidates = []
+    remaining = CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES
+    for path in sorted(paths, key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True):
         try:
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            size = path.stat().st_size
+            take = min(size, remaining)
+            candidates.append((path, size, take))
+            remaining -= take
+            if remaining <= 0:
+                break
+        except OSError:
+            errors += 1
+    for path, size, take in sorted(candidates, key=lambda item: item[0].stat().st_mtime if item[0].exists() else 0):
+        try:
+            with path.open("rb") as handle:
+                if size > take:
+                    handle.seek(size - take)
+                payload = handle.read(take)
+            text = payload.decode("utf-8", errors="replace")
+            if size > take:
+                text = text.split("\n", 1)[-1]
+            for line in text.splitlines():
                 try:
                     value = json.loads(line)
                     if isinstance(value, dict):
@@ -9877,6 +10037,24 @@ def change_intelligence_cached_status(force=False):
 def change_intelligence_public_status(force=False):
     if not CHANGE_INTELLIGENCE_ENABLED:
         return {"ok": False, "enabled": False, "state": "disabled", "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME)}
+    if not force and retained_metrics_should_defer():
+        return {
+            "ok": False,
+            "enabled": True,
+            "state": "verification-deferred",
+            "statusDeferred": True,
+            "eventCount": 0,
+            "openIncidents": [],
+            "incidents": [],
+            "recentEvents": [],
+            "readinessCertification": None,
+            "integrity": {"ok": False, "sqlite": "deferred", "eventChainValid": False},
+            "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
+            "cacheSeconds": CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS,
+            "responseDrillsEnabled": RESPONSE_DRILLS_ENABLED,
+            "responseDrillConfirm": CONFIRM_RESPONSE_DRILL,
+            "readinessCertificationConfirm": CONFIRM_READINESS_CERTIFICATION,
+        }
     status = change_intelligence_cached_status(force=force)
     status.update({
         "enabled": True, "runtime": dict(CHANGE_INTELLIGENCE_RUNTIME),
@@ -12332,7 +12510,18 @@ class Handler(BaseHTTPRequestHandler):
                 if cached_metrics is not None:
                     self.text(cached_metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
                     return
-                metrics = change_intelligence_store().prometheus(change_intelligence_public_status()) if CHANGE_INTELLIGENCE_ENABLED else "dash_change_intelligence_collector_up 0\n"
+                if retained_metrics_should_defer():
+                    metrics = deferred_change_intelligence_metrics() + deferred_audit_ledger_metrics()
+                    metrics_document_cache_put("change-intelligence", metrics)
+                    self.text(metrics + metrics_document_cache_prometheus(), "text/plain; version=0.0.4; charset=utf-8")
+                    return
+                change_metrics_status = change_intelligence_metrics_status()
+                metrics = (
+                    change_intelligence_store().prometheus(change_metrics_status)
+                    if change_metrics_status is not None and CHANGE_INTELLIGENCE_ENABLED
+                    else deferred_change_intelligence_metrics() if CHANGE_INTELLIGENCE_ENABLED
+                    else "dash_change_intelligence_collector_up 0\n"
+                )
                 metrics += deployment_assurance_store().prometheus() if DEPLOYMENT_ASSURANCE_ENABLED else "dash_deployment_assurance_collector_up 0\n"
                 metrics += change_approval_store().prometheus(enabled=DUAL_CONTROL_ENABLED)
                 metrics += audit_ledger_prometheus()
@@ -12622,7 +12811,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(credential_lifecycle_public_status(force=(params.get("refresh") or [""])[0].lower() in ("1", "true", "yes", "on")))
             elif parsed.path == "/api/ops/audit":
                 self.require_token()
-                ledger_status = audit_ledger_public_status()
+                ledger_status = audit_ledger_public_status(force=True)
                 sealed_events = []
                 if AUDIT_LEDGER_ENABLED and ledger_status.get("ok"):
                     sealed_events = admin_audit_ledger().list(AUDIT_EVENT_LIMIT)
@@ -12714,7 +12903,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(desired_state_public_status())
             elif parsed.path == "/api/ops/change-intelligence":
                 self.require_token()
-                self.json(change_intelligence_public_status())
+                try:
+                    status = change_intelligence_public_status(force=True)
+                except TypeError as exc:
+                    # Keep lightweight embedders/tests that provide the
+                    # historical zero-argument status hook compatible.
+                    if "force" not in str(exc):
+                        raise
+                    status = change_intelligence_public_status()
+                self.json(status)
             elif parsed.path == "/api/ops/deployment-assurance":
                 self.require_token()
                 self.json(deployment_assurance_public_status())
@@ -12831,6 +13028,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/admin/digests":
                 self.require_token()
                 self.json(read_admin_digest_state())
+            elif parsed.path == "/api/admin/base-recovery-reminders":
+                self.require_token()
+                try:
+                    state = json.loads(ADMIN_DIGEST_STATE_FILE.read_text(encoding="utf-8"))
+                except (FileNotFoundError, json.JSONDecodeError):
+                    state = {}
+                self.json(read_base_recovery_reminders(state))
             elif parsed.path == "/api/characters":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -13524,6 +13728,47 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("base retirement action must be preview, archive, cooldown-preview, or cooldown-reset")
                 self.audit("base-cooldown" if action.startswith("cooldown-") else "base-retirement", ok=True, retirement_action=action, totem_id=body.get("totemId", body.get("totem_id")), recovery_player_id=body.get("recoveryPlayerId", body.get("recovery_player_id")), base_backup_id=result.get("baseBackupId"), fingerprint=result.get("expectedFingerprint"), last_backup_timestamp=((result.get("verification") or {}).get("lastBackupTimestamp")))
                 self.json(result)
+            elif parsed.path == "/api/admin/base-recovery-reminders":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "upsert").strip().lower()
+                if action in ("add", "upsert", "replace"):
+                    self.require_mutations()
+                    if not BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED:
+                        raise PermissionError("base-recovery reminder writes are disabled; enable DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true")
+                    account_id = body.get("accountId", body.get("account_id"))
+                    backup_id = body.get("backupId", body.get("backup_id"))
+                    totem_id = body.get("totemId", body.get("totem_id"))
+                    reminder = base_recovery_reminders.upsert_reminder(
+                        account_id,
+                        backup_id,
+                        totem_id,
+                        body.get("message") or base_recovery_reminders.DEFAULT_MESSAGE,
+                    )
+                    self.audit(
+                        "base-recovery-reminder-upsert",
+                        ok=True,
+                        account_id=reminder.get("accountId"),
+                        backup_id=reminder.get("backupId"),
+                        totem_id=reminder.get("totemId"),
+                    )
+                    self.json({"ok": True, "action": "upsert", "reminder": reminder, **read_base_recovery_reminders()})
+                elif action in ("remove", "delete"):
+                    self.require_mutations()
+                    if not BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED:
+                        raise PermissionError("base-recovery reminder writes are disabled; enable DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_BASE_RECOVERY_REMINDER)
+                    account_id = body.get("accountId", body.get("account_id"))
+                    removed = base_recovery_reminders.remove_reminder(account_id)
+                    self.audit(
+                        "base-recovery-reminder-remove",
+                        ok=True,
+                        account_id=account_id,
+                        removed=bool(removed),
+                    )
+                    self.json({"ok": True, "action": "remove", "removed": removed, **read_base_recovery_reminders()})
+                else:
+                    raise ValueError("base-recovery reminder action must be upsert or remove")
             elif parsed.path == "/api/presets/gameplay":
                 self.require_token()
                 if not GAMEPLAY_PRESETS_ENABLED:
@@ -16005,7 +16250,7 @@ class Handler(BaseHTTPRequestHandler):
             FEDERATED_AUTH_ENABLED
         )
         approval_status = change_approval_store().status() if DUAL_CONTROL_ENABLED else {"ledger": {"ok": True}}
-        audit_ledger_status = audit_ledger_public_status()
+        audit_ledger_status = audit_ledger_public_status(force=True)
         checks = [
             {"name": "admin auth mode", "ok": token_required, "value": "authentication required" if token_required else "unlocked"},
             {"name": "admin credential source configured", "ok": credential_configured if token_required else False, "value": "owner/RBAC/federated" if credential_configured else "missing"},
@@ -22610,13 +22855,49 @@ function digestList(entries){
   if (!entries.length) return '<div class="muted">No digests recorded.</div>';
   return `<div class="eventList">${entries.map(e => `<div class="eventItem"><div class="eventItemHead"><b>${esc(e.event || 'digest')}</b><span class="pill">${esc(e.audience || '')}</span></div><div class="muted">${esc(String(e.ts || '').replace('T', ' ').replace('Z', ''))}</div><div>${esc(e.message || '')}</div>${e.payload && Object.keys(e.payload).length ? `<details><summary>Payload</summary><pre>${esc(JSON.stringify(e.payload, null, 2))}</pre></details>` : ''}</div>`).join('')}</div>`;
 }
+function baseRecoveryReminderPanel(data){
+  const rows = data.reminders || [];
+  const enabled = !!data.mutationEnabled;
+  const confirmPhrase = data.confirmPhrase || 'REMOVE BASE RECOVERY REMINDER';
+  const body = rows.length ? rows.map(row => {
+    const status = row.restoredAt || row.lastStatus?.restored ? 'restored' : (row.active === false ? 'paused' : 'active');
+    const statusClass = status === 'restored' ? 'ok' : status === 'active' ? 'warn' : '';
+    const checked = row.lastStatusCheckedAt || 'not checked';
+    const sent = row.lastSentAt || 'not sent';
+    return `<div class="eventItem"><div class="eventItemHead"><b>${esc(row.accountId)} · ${esc(row.playerName || 'unknown player')}</b><span class="pill ${statusClass}">${esc(status)}</span><span class="pill">${row.online ? 'online' : 'offline'}</span></div><div class="muted">BRT backup ${esc(row.backupId)} · totem ${esc(row.totemId)} · checked ${esc(checked)} · last sent ${esc(sent)}</div><div>${esc(row.message || '')}</div><div class="commandBar"><button data-base-recovery-remove="${esc(row.accountId)}" ${enabled ? '' : 'disabled'} class="danger">Remove reminder</button></div></div>`;
+  }).join('') : '<div class="muted">No persistent base-recovery reminders configured.</div>';
+  return `<div class="panelBand"><div class="sectionHeader"><div><h2>Base Recovery Reminders</h2><p class="muted">Each record sends one private Paul message per detected login session until conservative native BRT status proves the base was restored. Removing a record stops future delivery; it does not alter the player, base, backup, or inventory.</p></div><div class="toolbar"><span class="pill ${enabled ? 'warn' : 'ok'}">writes ${enabled ? 'enabled' : 'disabled'}</span><span class="pill">${esc(rows.length)} configured</span></div></div><p class="muted">Registry: <code>${esc(data.path || 'backups/admin-bot/base-recovery-reminders.json')}</code>${data.error ? ` · <span class="bad">${esc(data.error)}</span>` : ''}</p><div class="twoCol"><div><h3>Add or replace reminder</h3><div class="grid"><label>Account id<input id="baseRecoveryAccountId" type="number" min="1" step="1" placeholder="5247"></label><label>BRT backup id<input id="baseRecoveryBackupId" type="number" min="1" step="1" placeholder="127"></label><label>Base totem id<input id="baseRecoveryTotemId" type="number" min="1" step="1" placeholder="22323"></label></div><label>Private reminder message<textarea id="baseRecoveryMessage" rows="4" maxlength="4096">${esc('Mara, your base is preserved in the server Base Reconstruction Tool backup. When you return, please contact a server admin so we can recover it for you.')}</textarea></label><div class="commandBar"><button id="baseRecoveryAddBtn" class="primary" ${enabled ? '' : 'disabled'}>Save reminder</button><button id="baseRecoveryRefreshBtn">Refresh status</button></div><p class="muted">Writes require both <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and <code>DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true</code>.</p></div><div><h3>Configured reminders</h3><div class="eventList">${body}</div><p class="muted">Remove confirmation: <code>${esc(confirmPhrase)}</code></p></div></div></div>`;
+}
+async function saveBaseRecoveryReminder(){
+  const accountId = document.getElementById('baseRecoveryAccountId')?.value || '';
+  const backupId = document.getElementById('baseRecoveryBackupId')?.value || '';
+  const totemId = document.getElementById('baseRecoveryTotemId')?.value || '';
+  const message = document.getElementById('baseRecoveryMessage')?.value || '';
+  if (!accountId || !backupId || !totemId) throw new Error('Account id, BRT backup id, and base totem id are required.');
+  await api('/api/admin/base-recovery-reminders', {method:'POST', body:JSON.stringify({action:'upsert',accountId,backupId,totemId,message})});
+  notify('Base-recovery reminder saved', 'ok');
+  await digests(loadSerial);
+}
+async function removeBaseRecoveryReminder(accountId, confirmPhrase){
+  if (!confirm(`Remove the persistent base-recovery reminder for account ${accountId}? Future login messages will stop.`)) return;
+  await api('/api/admin/base-recovery-reminders', {method:'POST', body:JSON.stringify({action:'remove',accountId,confirm:confirmPhrase})});
+  notify(`Base-recovery reminder removed for account ${accountId}`, 'ok');
+  await digests(loadSerial);
+}
+function bindBaseRecoveryReminderControls(data){
+  document.getElementById('baseRecoveryAddBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveBaseRecoveryReminder));
+  document.getElementById('baseRecoveryRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => digests(loadSerial)));
+  document.querySelectorAll('[data-base-recovery-remove]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Removing...', () => removeBaseRecoveryReminder(button.dataset.baseRecoveryRemove, data.confirmPhrase || 'REMOVE BASE RECOVERY REMINDER'))));
+}
 async function digests(serial=loadSerial){
   const data = await api('/api/admin/digests');
   if (serial !== loadSerial) return;
   const entries = data.digests || [];
   const adminEntries = entries.filter(e => e.audience === 'admin');
   const publicEntries = entries.filter(e => e.audience === 'public');
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div><div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  const reminderData = {reminders:data.baseRecoveryReminders || [], path:data.baseRecoveryReminderPath, mutationEnabled:data.baseRecoveryReminderMutationEnabled, confirmPhrase:data.baseRecoveryReminderConfirm, error:data.baseRecoveryReminderError};
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div>${baseRecoveryReminderPanel(reminderData)}<div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  bindBaseRecoveryReminderControls(reminderData);
 }
 async function carePackages(serial=loadSerial){
   const [data, roster] = await Promise.all([
@@ -24154,7 +24435,13 @@ load();
 
 
 def main():
+    # Complete startup catch-up before binding the admin socket. The audit
+    # chain is verified once after that work so the first privileged request
+    # does not pay the full retained-ledger scan; subsequent requests reuse
+    # the verified artifact cache for its bounded lifetime.
     ensure_change_intelligence()
+    if AUDIT_LEDGER_ENABLED:
+        audit_ledger_public_status(force=True)
     ensure_announcement_thread()
     ensure_care_package_auto_thread()
     ensure_memory_balancer_thread()

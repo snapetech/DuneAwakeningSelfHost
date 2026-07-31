@@ -40,7 +40,7 @@ class AuditLedgerTests(unittest.TestCase):
         with mock.patch.object(self.store, "_verify_connection", wraps=self.store._verify_connection) as verify:
             self.assertTrue(self.store.status()["ok"])
             self.assertEqual(0, verify.call_count)
-            self.store.append(self.event("extended"))
+            self.store.append(self.event("extended"), verify_chain=True)
             self.assertTrue(self.store.status()["ok"])
             self.assertEqual(0, verify.call_count)
             (self.database.parent / "unrelated-state.tmp").write_text("changed", encoding="utf-8")

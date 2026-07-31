@@ -56,7 +56,8 @@ operator actions such as:
 - security denials and other retained audit events.
 
 On activation and every later start, DASH scans at most the newest
-`historyImportLimit` events from rotated and current admin audit JSONL files.
+`historyImportLimit` events and the configured startup byte budget from rotated
+and current admin audit JSONL files.
 It bulk-checks keyed source fingerprints and inserts only missing rows, so the
 normal catch-up is idempotent and cheap—including an event that may race first
 startup. An audit event whose direct SQLite insertion failed transiently is
@@ -232,6 +233,7 @@ assigning new semantics to the old format.
 | `DUNE_CHANGE_INTELLIGENCE_HMAC_SECRET_FILE` | `/workspace/config/secrets/change-intelligence-hmac.secret` | Private authentication key. |
 | `DUNE_CHANGE_INTELLIGENCE_EVIDENCE_DIR` | `/workspace/backups/operator-evidence` | Container path for private portable signed incident and deployment evidence. |
 | `DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS` | `60` | Single-flight public-status reuse window preventing concurrent API/readiness/metrics scans from rebuilding incident correlation views. Valid range is 1–300 seconds. |
+| `DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES` | `67108864` | Maximum rotated/current audit JSONL bytes read during startup catch-up; bounded to 1 MiB–512 MiB. |
 | `DUNE_CHANGE_INTELLIGENCE_HOST_EVIDENCE_DIR` | `backups/operator-evidence` | Mixed signed-evidence host path archived by full backups. |
 | `DUNE_RESPONSE_DRILLS_ENABLED` | `true` | Enables explicit fixed-diagnostic incident rehearsals and fleet-wide policy certification. |
 

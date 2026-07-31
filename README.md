@@ -72,7 +72,7 @@ the publication gate.
   topology reconciliation, and all-farm lifecycle integration.
 - Recovery helpers for dependency loss and stale fixed-partition server IDs.
 - Host-level map watchdog service for unattended recovery.
-- LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests, Catalog, and Discovery surfaces.
+- LAN/VPN admin panel with Overview, Ops, Infrastructure, World, Security, Runbook, Players, Cosmetics, Blueprints, Care Packages, Addons, Bootstrap, Settings, Admin Actions, Admin Digests (including persistent Base Recovery Reminders), Catalog, and Discovery surfaces.
 - Browser service/log control, verified manual and automatic backup lifecycle, certified daily maintenance that revalidates an exact staged update before player disruption, requires a newly verified stopped-world backup before apply, restores the current build on proof/update failure, and emits a signed stage-by-stage outcome, daily no-network PostgreSQL restore proof with hash-chained RPO/RTO receipts, time-weighted SLOs/error budgets and immutable incident history, HMAC-sealed file/container desired-state attestation, tamper-evident operational change intelligence with non-causal incident correlation, deterministic evidence-linked response plans, portable signed escalation capsules, layered disaster restore, bounded database query/row/password controls, dual-cadence dynamic map autoscaling with three-second incremental Director detection, immediate demand promotion, and lower-frequency full Docker/player reconciliation, retained capacity intelligence with evidence-driven adaptive retention and p95-based just-in-time warm scheduling, map-scoped live memory balancing, and retained Prometheus metrics.
 - Staged game-build acquisition and exact candidate-bound update certification
   with recovery/configuration/health gates, expiring HMAC receipts, candidate
@@ -99,7 +99,7 @@ the publication gate.
 - An isolated community-credit economy with one-time Discord account linking, immutable hash-chained ledger, atomic shop/kit stock and orders, playtime/vote/manual-payment accrual, movement-verified scaled session airdrops, daily streaks, weekly active-time thresholds, append-only engagement claims, versioned reward tracks, offline delivery receipts, and failure refunds.
 - Persistent one-time/recurring event automation with safe announcement, non-executing restart-plan, and guarded map-prewarm primitives, dry-run mutation proposals, manual run/cancel, and a bounded execution ledger.
 - Reproducible backend item-grant helper with dry-run, explicit confirmation, and reviewed display-name labels such as `Complex Machinery` -> `T2MachineComponent`.
-- Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, and admin-bot monitoring.
+- Restart announcements, restart planner hooks, chat-command bridge, player-presence announcer, persistent per-account base-recovery reminders, and admin-bot monitoring.
 - Private whisper replies for admin chat commands, auction confirmations, player-presence messages, and admin-only digests through the verified `chat.whispers` route.
 - Chat spam protection with repeat-message detection, public action announcements, and a blocked-by-default kick backend.
 - Verified targeted network-timeout teleport research: a scoped `UNetConnection` timeout plus the shipped offline move helper moved a test player, and reconnect loaded the moved pawn. This is a working teleport mechanism, not a soft disconnect; see `docs/soft-disconnect-teleport.md`.
@@ -587,6 +587,7 @@ The admin surface requires authentication by default. Set a high-entropy `DUNE_A
 | Settings | Selected `.env` and config edits with backups. |
 | Admin Actions | Guarded runtime skill/water/kick/vehicle actions, persistent vehicle maintenance, Landsraad writes, currency/Solari/XP, augments, grants, keystones, stack edits, and deletion. |
 | Admin Digests | Private operator summaries derived from existing presence and operations state. |
+| Base Recovery Reminders | Durable account-to-native-BRT reminder records with add/replace/remove controls, restore proof, online state, and last-send status. |
 | Catalog | Content insertion evidence, typed knob dry-runs/writes, resource and progression inspection, event planning, economy bundle planning, and gated world/player/economy mutator families. |
 | Discovery | Build/surface evidence plus retained, read-only revision drift against every pinned ecosystem peer repository. |
 
@@ -820,9 +821,15 @@ Paul/Admin automation is split across two scripts:
 ```bash
 ./scripts/admin-bot.py --once
 ./scripts/player-presence-announcer.py --once
+
+# Persistent base-recovery reminder registry
+./scripts/base-recovery-reminder.py add --account-id 5247 --backup-id 127 --totem-id 22323
+./scripts/base-recovery-reminder.py list
+./scripts/base-recovery-reminder.py check
+./scripts/base-recovery-reminder.py remove --account-id 5247
 ```
 
-`admin-bot.py` is report-first automation for backup freshness, map health, stuck transitions, audit/security digests, currency/base anomalies, and config drift. `player-presence-announcer.py` handles live join/leave and private/global player messaging. See [`docs/admin-bot.md`](docs/admin-bot.md) and [`docs/private-chat-replies.md`](docs/private-chat-replies.md).
+`admin-bot.py` is report-first automation for backup freshness, map health, stuck transitions, audit/security digests, currency/base anomalies, and config drift. `player-presence-announcer.py` handles live join/leave and private/global player messaging. `base-recovery-reminder.py` manages the durable account-to-native-BRT registry used by the worker and the Admin Digests panel; each configured record repeats once per detected login session until conservative restore proof is present. See [`docs/admin-bot.md`](docs/admin-bot.md), [`docs/admin-panel.md`](docs/admin-panel.md), and [`docs/private-chat-replies.md`](docs/private-chat-replies.md).
 
 ## Public Static Site
 
@@ -1037,6 +1044,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_ADMIN_TOKEN` / `DUNE_ADMIN_REQUIRE_TOKEN` | Owner recovery credential and authentication-required switch; authentication defaults on. |
 | `DUNE_ADMIN_DUAL_CONTROL_ENABLED` / `DUNE_ADMIN_DUAL_CONTROL_POLICY` / `DUNE_ADMIN_DUAL_CONTROL_TTL_SECONDS` | Optional named two-person approvals for exact governed mutation bodies; choose critical/high/all scope and a 60–3,600-second lifetime. |
 | `DUNE_ADMIN_MUTATIONS_ENABLED` | Master gate for admin writes; example default is fail-closed. |
+| `DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED` | Separate gate for authenticated Admin Digests add/replace/remove actions; reads and status remain available when false. |
 | `DUNE_ADMIN_ITEM_GRANTS_ENABLED` | Separate gate for item grants, stack edits, and deletion; example default is fail-closed. |
 | `DUNE_ADMIN_GM_COMMANDS_ENABLED` / `DUNE_GM_COMMAND_PAYLOAD_VERIFIED` | Generic legacy GM/RPC gates. The catalog-backed player actions use the first gate plus their dedicated runtime gate, not the legacy payload-verified flag. |
 | `DUNE_ADMIN_*_ENABLED` write gates | Per-family gates for typed knobs, events, bundles, progression, faction, Landsraad, respawn, guild, markers, landclaim, Exchange, tags, access codes, Communinet, tutorial, permission, vendor, character slots, player-identity cleanup, and native character deletion. |
@@ -1059,6 +1067,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_CHAT_COMMAND_ADMINS` / `DUNE_CHAT_COMMAND_ADMIN_FLS_IDS` | Chat-command allowlists. |
 | `DUNE_CHAT_COMMAND_TARGET_REPLY_MODE` and private reply keys | Optional private command replies through the verified `chat.whispers` path. |
 | `DUNE_CHAT_SPAM_*` | Repeat-message spam detection, exemptions, public announcements, and kick backend settings. |
+| `DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDERS_FILE` | Durable JSON account-to-native-BRT reminder registry shared by the CLI, player-presence worker, and Admin Digests panel. |
+| `DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_*` | Legacy one-record compatibility fallback used only before the durable registry file exists; registry records take precedence. |
 | `DUNE_PLAYER_PRESENCE_*` | Player-presence announcements, private welcomes, milestones, base reminders, restart notices, map-health alerts, admin digests, and starter-tool grants. |
 
 ### Exchange, care packages, and item tooling
@@ -1093,6 +1103,8 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_MAINTENANCE_PLANNER_ENABLED` / `DUNE_MAINTENANCE_PLANNER_POLICY` | Zero-inclusive aggregate population learning and the bounded policy used to rank exact low-impact maintenance windows. |
 | `DUNE_ALERT_INBOX_ENABLED` / `DUNE_ADMIN_ALERT_INBOX_MUTATIONS_ENABLED` | Enable authoritative Prometheus alert ingestion and separately admit operator acknowledgement; acknowledgement never silences or resolves the source. |
 | `DUNE_ALERT_INBOX_PROMETHEUS_URL` / `DUNE_ALERT_INBOX_POLL_SECONDS` / `DUNE_ALERT_INBOX_RETENTION_DAYS` | Private Prometheus origin, bounded collection cadence, and durable resolved-transition retention. |
+| `DUNE_CHANGE_INTELLIGENCE_STATUS_CACHE_SECONDS` | Bounded reuse window for the verified Change Intelligence status view. |
+| `DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES` | Startup byte budget for importing rotated audit JSONL into the Change Intelligence ledger; default 64 MiB. |
 
 ### Database and service control
 
@@ -1378,6 +1390,8 @@ Root-level research indexes:
 - [`scripts/character-slot-tool.py`](scripts/character-slot-tool.py): CLI inspect/plan/execute wrapper for admin character switch/restore operations.
 - [`scripts/grant-aql-trials.py`](scripts/grant-aql-trials.py): Offline-only helper for marking one or all `Find the Fremen` / Trials of Aql journey subtrees complete through the first-party DB journey function.
 - [`scripts/player-presence-announcer.py`](scripts/player-presence-announcer.py): join/leave, private message, milestone, map-health, and admin-digest automation.
+- [`scripts/base-recovery-reminder.py`](scripts/base-recovery-reminder.py): CLI add/list/check/remove manager for persistent per-account native BRT reminders.
+- [`scripts/base_recovery_reminders.py`](scripts/base_recovery_reminders.py): shared validated, lock-protected reminder registry and conservative restore-status helpers.
 - [`scripts/admin-bot.py`](scripts/admin-bot.py): report-first operational/admin automation.
 - [`scripts/seed-gateway-neighbor.sh`](scripts/seed-gateway-neighbor.sh): Docker bridge neighbor refresh helper.
 - [`scripts/backup-offsite.sh`](scripts/backup-offsite.sh): local backup plus rclone, rsync, restic, or local-only sync helper.

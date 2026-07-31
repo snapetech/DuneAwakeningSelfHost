@@ -302,6 +302,7 @@ server {
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
 - Restart-announcement scheduler under Ops. It accepts a restart time, message, and repeat interval, persists state under `backups/admin-panel/announcements.json`, and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` for each delivery attempt.
 - Scheduled restart planner under Ops. It targets all components, core services, the service layer, all game maps, or key individual maps. Jobs persist under `backups/admin-panel/restart-jobs.json` and invoke `DUNE_ADMIN_RESTART_COMMAND` only when execution is explicitly enabled.
+- Admin Digests includes persistent Base Recovery Reminders. Each record binds an account to its native BRT backup and base totem, shows the worker's latest conservative restore proof and player presence, and sends one Paul whisper per detected login session until restoration. Add/replace and remove actions are separately gated and audited; removing a record never changes the player, base, backup, inventory, or credits.
 - Player roster split into currently online players and offline players, plus search and detail views.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
@@ -1259,6 +1260,57 @@ Current coverage:
 - Event execution blocked by default.
 - Character-slot discovery, dry-run behavior, online-player refusal, and missing native-contract blockers.
 - Dry-run planning and fail-closed gates for promoted mutator families.
+
+## Base Recovery Reminders
+
+The Admin Digests page includes the persistent Base Recovery Reminders panel.
+It reads and writes the same registry used by
+[`scripts/base-recovery-reminder.py`](../scripts/base-recovery-reminder.py):
+
+```text
+backups/admin-bot/base-recovery-reminders.json
+```
+
+Each row stores `accountId`, `backupId`, `totemId`, and the private message.
+The player-presence worker records `active`, `restoredAt`, `lastStatus`,
+`lastStatusCheckedAt`, `lastSentAt`, and the online/player-name marker in
+`backups/admin-bot/player-presence.json`. Restore is deliberately conservative:
+the BRT backup must be absent, the totem must still exist, the target account
+must have an active permission rank on it, and no linked actor may remain
+marked `BaseBackup`. Query failure therefore leaves the reminder active.
+
+The read endpoint is authenticated and read-only:
+
+```http
+GET /api/admin/base-recovery-reminders
+```
+
+Add/replace and removal use the same authenticated endpoint. Both require
+`DUNE_ADMIN_MUTATIONS_ENABLED=true` and
+`DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true`; removal also
+requires the exact `REMOVE BASE RECOVERY REMINDER` confirmation phrase:
+
+```json
+{
+  "action": "upsert",
+  "accountId": 5247,
+  "backupId": 127,
+  "totemId": 22323,
+  "message": "Contact a server admin to recover your preserved base."
+}
+```
+
+```json
+{
+  "action": "remove",
+  "accountId": 5247,
+  "confirm": "REMOVE BASE RECOVERY REMINDER"
+}
+```
+
+Every write is included in the authenticated audit path. Removing a reminder
+only stops future messages; it does not delete or modify the player, base,
+native BRT backup, inventory, or credits.
 
 ## Restart Announcements
 

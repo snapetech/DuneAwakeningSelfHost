@@ -297,7 +297,13 @@ class Store:
                     connection.execute("begin immediate")
                     try:
                         if verify_chain:
-                            verified_integrity = self._verify_connection(connection)
+                            # A successful startup/request verification is cached and
+                            # tied to the database/key/anchor artifact signature. Reuse
+                            # that proof for the next append instead of rescanning the
+                            # entire retained chain while holding the append lock. If
+                            # the artifacts changed or the cache expired, verify once
+                            # before admitting the append.
+                            verified_integrity = cached_integrity or self._verify_connection(connection)
                         sequence, previous = self._assert_head(connection)
                         existing = connection.execute(
                             "select sequence,event_sha256,event_hmac_sha256 from events where event_id=?", (event_id,)

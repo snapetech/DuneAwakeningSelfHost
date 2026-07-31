@@ -57,6 +57,13 @@ DUNE_ADMIN_BOT_SECURITY_GUARD_ENABLED=true
 
 State is stored in `backups/admin-bot/state.json`. The state file tracks audit offsets and config hashes so repeated runs report only new audit activity and drift since the previous run.
 
+Base-recovery reminders are stored separately in
+`backups/admin-bot/base-recovery-reminders.json` by default. The registry is
+shared by the CLI, the player-presence worker, and the Admin Digests panel.
+Keep `DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=false` unless the
+authenticated panel should be allowed to add, replace, or remove reminder
+records; the global `DUNE_ADMIN_MUTATIONS_ENABLED` gate is required as well.
+
 ## Player Presence Announcements
 
 `scripts/player-presence-announcer.py` is a lightweight companion loop for chatty player-presence events. It polls `dune.player_state`, stores the previous online set in `backups/admin-bot/player-presence.json`, and announces only transitions after the first baseline poll.
@@ -81,6 +88,8 @@ DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_EXCHANGE=chat.whispers
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_CHANNEL=Whispers
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_ROUTING_KEY=
 DUNE_PLAYER_PRESENCE_PRIVATE_MESSAGE_COMMAND=/workspace/scripts/announce.sh
+DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDERS_FILE=backups/admin-bot/base-recovery-reminders.json
+# Compatibility fallback only; registry records take precedence once the file exists.
 DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED=false
 DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ACCOUNT_ID=5247
 DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_BACKUP_ID=127
@@ -174,15 +183,44 @@ The private welcome path runs on every detected join for existing and new player
 Welcome! Please check {rules_url} for server rules.
 ```
 
-The optional base-recovery reminder targets one account and uses the verified
-Paul whisper route. When enabled, it sends one private reminder for each
-distinct `lastLoginTime` session while the configured native BRT backup is
-still staged. The poll checks the live database on every cycle and stops only
-when that backup is gone, the totem exists with an active owner permission for
-the target account, and the totem is no longer marked `BaseBackup`. A failed
-status query leaves the reminder active; a failed whisper is retried on the
-next poll. Keep the account, backup, and totem ids bound to the same recovery
-receipt.
+The base-recovery reminder registry targets any number of accounts and uses the
+verified Paul whisper route. Each record sends one private reminder for each
+distinct `lastLoginTime` session while its native BRT backup is still staged.
+The poll checks the live database on every cycle and stops only when that
+backup is gone, the totem exists with an active owner permission for the target
+account, and the totem is no longer marked `BaseBackup`. A failed status query
+leaves the reminder active; a failed whisper is retried on the next poll. Keep
+each account, backup, and totem id bound to the same recovery receipt.
+
+Manage records from the repository checkout without editing `.env`:
+
+```bash
+# Add or replace one persistent reminder.
+./scripts/base-recovery-reminder.py add --account-id 5247 --backup-id 127 --totem-id 22323 \
+  --message "Mara, your base is preserved in the server's Base Reconstruction Tool backup. Contact a server admin when you return."
+
+# Show configured records plus the latest worker status and online marker.
+./scripts/base-recovery-reminder.py list
+
+# Run a read-only native BRT status check (optionally --account-id N).
+./scripts/base-recovery-reminder.py check
+
+# Stop future reminders for one account; this does not touch the player, base,
+# native BRT backup, inventory, or any credits/items.
+./scripts/base-recovery-reminder.py remove --account-id 5247
+```
+
+The CLI accepts `--file PATH` before the subcommand for a separate registry.
+If the registry file does not exist, the worker temporarily honors the legacy
+`DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_*` single-record environment
+variables for compatibility. Creating the registry (including an empty one)
+intentionally supersedes that fallback.
+
+The Admin Digests page exposes the same records with account/backup/totem ids,
+message text, active/restored state, online/player name, last status check, and
+last send time. Saving a record uses `POST /api/admin/base-recovery-reminders`
+and requires both mutation gates. Removal requires the exact confirmation
+phrase shown in the panel and is audited; it only removes the reminder record.
 
 Automated private messages are derived from local state and operator config rather than hard-coded server details. These use the private helper and should render as whispers/private messages:
 

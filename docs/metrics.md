@@ -21,12 +21,15 @@ SQLite/HMAC source refreshes are substantially more expensive than serving the
 text exposition, while their underlying collectors run on 30–60 second
 cadences. Refresh is single-flight: the first request rebuilds an expired
 document, concurrent scrapes receive the prior authenticated document, and a
-first-start caller waits for the in-flight build instead of starting another
-full-chain verification. Live autoscaler enablement, timestamps, counters, and
-error gauges are appended after the cache and therefore remain current on every capacity scrape.
+first-start caller waits up to one second for the in-flight build. If that
+bounded wait expires, the scrape returns a label-safe
+`dash_admin_metrics_document_deferred` gauge instead of occupying another
+request thread until the expensive build finishes. Live autoscaler enablement,
+timestamps, counters, and error gauges are appended after the cache and
+therefore remain current on every capacity scrape.
 Set `DUNE_ADMIN_METRICS_CACHE_SECONDS=0` to disable reuse or a value through
-`300` to tune it. Label-free cache entry, hit, miss, stale-hit, and initial-wait
-counters make the behavior observable.
+`300` to tune it. Label-free cache entry, hit, miss, stale-hit, initial-wait,
+and deferred counters make the behavior observable.
 The audit-ledger and Change Intelligence verification caches bind to their own
 database, WAL, anchor, policy, and key metadata. The shared parent directory's
 ownership and mode remain part of the security check, but unrelated Admin state
@@ -42,6 +45,20 @@ Change Intelligence emits the latest response-readiness drill result/time and
 the latest fleet-wide readiness certification result/time, runbook coverage,
 shared-diagnostic totals, and recovery-contract totals. Those series have no
 incident, operator, command, runbook, gate, or digest labels.
+When the retained Change Intelligence SQLite file exceeds 32 MiB, the
+`/metrics/change-intelligence` scrape returns a bounded deferred collector
+gauge instead of synchronously walking and HMAC-verifying the entire retained
+evidence set. The combined scrape returns only deferred collector gauges until
+the next bounded cache refresh, which keeps the admin request pool available
+for operator actions; the authenticated `/api/ops/change-intelligence` view
+remains the deliberate, full-verification surface.
+The audit-ledger collector follows the same bounded rule: a large ledger is
+verified once before the admin socket binds, then metrics reuse that receipt;
+an expired receipt produces a deferred validity gauge rather than forcing a
+full chain scan from a Prometheus request.
+Startup import of rotated audit JSONL is bounded to 64 MiB by default via
+`DUNE_CHANGE_INTELLIGENCE_HISTORY_IMPORT_MAX_BYTES`; increase it only when a
+deliberate catch-up of older evidence is worth the additional startup I/O.
 The same endpoint emits deployment-assurance verification, latest outcome/time,
 open windows, and overdue windows. It does not label commits, paths, services,
 operators, backups, or receipt digests.

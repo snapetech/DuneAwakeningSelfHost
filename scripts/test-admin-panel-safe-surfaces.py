@@ -4303,6 +4303,7 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertIn("dash_admin_metrics_document_cache_misses_total 2\n", telemetry)
         self.assertIn("dash_admin_metrics_document_cache_stale_hits_total 0\n", telemetry)
         self.assertIn("dash_admin_metrics_document_cache_waits_total 0\n", telemetry)
+        self.assertIn("dash_admin_metrics_document_cache_deferred_total 0\n", telemetry)
         self.assertNotIn("{", telemetry)
 
     def test_metrics_document_cache_single_flight_serves_stale_during_refresh(self):
@@ -4345,6 +4346,25 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertFalse(waiter.is_alive())
         self.assertEqual(["ready\n"], result)
         self.assertEqual(1, self.panel.METRICS_DOCUMENT_CACHE_RUNTIME["waits"])
+
+    def test_metrics_document_cache_defers_concurrent_initial_scrape(self):
+        original_seconds = self.panel.METRICS_DOCUMENT_CACHE_SECONDS
+        original_wait = self.panel.METRICS_DOCUMENT_CACHE_WAIT_SECONDS
+        original_cache = dict(self.panel.METRICS_DOCUMENT_CACHE)
+        original_runtime = dict(self.panel.METRICS_DOCUMENT_CACHE_RUNTIME)
+        self.panel.METRICS_DOCUMENT_CACHE_SECONDS = 30
+        self.panel.METRICS_DOCUMENT_CACHE_WAIT_SECONDS = 0
+        self.panel.METRICS_DOCUMENT_CACHE.clear()
+        self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update({"hits": 0, "misses": 0, "staleHits": 0, "waits": 0, "deferred": 0})
+        self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_SECONDS", original_seconds))
+        self.addCleanup(lambda: setattr(self.panel, "METRICS_DOCUMENT_CACHE_WAIT_SECONDS", original_wait))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE.clear() or self.panel.METRICS_DOCUMENT_CACHE.update(original_cache))
+        self.addCleanup(lambda: self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.clear() or self.panel.METRICS_DOCUMENT_CACHE_RUNTIME.update(original_runtime))
+
+        self.assertIsNone(self.panel.metrics_document_cache_get("deferred"))
+        result = self.panel.metrics_document_cache_get("deferred")
+        self.assertEqual('dash_admin_metrics_document_deferred{document="deferred"} 1\n', result)
+        self.assertEqual(1, self.panel.METRICS_DOCUMENT_CACHE_RUNTIME["deferred"])
 
     def test_operations_briefing_accepts_assured_backup_verified_field(self):
         original = self.panel.deployment_assurance_public_status
