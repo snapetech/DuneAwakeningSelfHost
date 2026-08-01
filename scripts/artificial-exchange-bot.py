@@ -308,6 +308,12 @@ def populator_owner_ids():
     return ids
 
 
+def buyer_identity_conflict(args):
+    """Return whether the buyer also owns the seeded populator listings."""
+    buyer_id = int(getattr(args, "buyer_controller_id", 0) or 0)
+    return buyer_id > 0 and str(buyer_id) in populator_owner_ids()
+
+
 def buyer_skip_reason(order, args):
     if order.get("is_npc_order") and not args.include_npc_test_orders:
         return "npc order skipped"
@@ -2294,6 +2300,7 @@ def purchase_postcondition_ok(postcondition):
 def execute_purchase(conn, order, buyer_controller_id):
     quantity = purchase_quantity(order)
     total_price = purchase_total_price(order)
+    max_orders_per_player = int(env("DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER", "50"))
     log_event(
         "purchase-attempt",
         orderId=order["id"],
@@ -2330,7 +2337,7 @@ def execute_purchase(conn, order, buyer_controller_id):
             """,
             (
                 order["exchange_id"],
-                int(env("DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER", "50")),
+                max_orders_per_player,
                 int(env("DUNE_ARTIFICIAL_EXCHANGE_PURCHASED_COMPLETION_TYPE", "0")),
                 int(env("DUNE_ARTIFICIAL_EXCHANGE_SOLD_COMPLETION_TYPE", "1")),
                 buyer_controller_id,
@@ -2344,9 +2351,13 @@ def execute_purchase(conn, order, buyer_controller_id):
     result = dict(result) if result else {}
     postcondition = purchase_postcondition(conn, order["id"])
     result["postcondition"] = postcondition
+    result["maxOrdersPerPlayer"] = max_orders_per_player
     result["ok"] = purchase_postcondition_ok(postcondition)
     if not result["ok"]:
-        result["reason"] = "native fulfill did not finalize order"
+        if int(result.get("order_slots_used") or 0) >= max_orders_per_player:
+            result["reason"] = "native fulfill blocked by order-slot limit"
+        else:
+            result["reason"] = "native fulfill did not finalize order"
         log_event("purchase-postcondition-failed", orderId=order["id"], result=result)
     log_event("purchase-result", orderId=order["id"], result=result)
     return result
@@ -2548,6 +2559,30 @@ def readiness_check(args):
             orders = fetch_orders(conn, args.exchange_id, min(args.limit, 20))
             settlements = settlement_report(conn, args.settlement_limit)
             buyer_balance = read_exchange_balance(conn, args.buyer_controller_id) if args.buyer_controller_id > 0 else None
+            buyer_used_slots = None
+            buyer_max_orders = int(env("DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER", "50"))
+            if args.buyer_controller_id > 0:
+                with conn.cursor() as cur:
+                    cur.execute("select dune.get_dune_exchange_used_order_slots(%s) as used_slots", (args.buyer_controller_id,))
+                    row = cur.fetchone() or {}
+                buyer_used_slots = int(row.get("used_slots") or 0)
+            purchases_enabled = env_bool("DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED", False) and not env_bool("DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN", True)
+            identity_conflict = buyer_identity_conflict(args)
+            checks.append({
+                "name": "buyerIdentity",
+                "ok": not identity_conflict,
+                "buyerControllerId": args.buyer_controller_id,
+                "populatorOwnerIds": sorted(populator_owner_ids()),
+                "reason": "buyer controller must be separate from populator owner" if identity_conflict else None,
+            })
+            checks.append({
+                "name": "buyerOrderCapacity",
+                "ok": not purchases_enabled or args.buyer_controller_id <= 0 or (buyer_used_slots is not None and buyer_used_slots < buyer_max_orders),
+                "buyerControllerId": args.buyer_controller_id,
+                "usedOrderSlots": buyer_used_slots,
+                "maxOrdersPerPlayer": buyer_max_orders,
+                "requiredForApply": purchases_enabled,
+            })
             if env_bool("DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_ENABLED", False) or args.populator_owner_id > 0 or args.populator_source_inventory_id > 0:
                 eligible = populator_eligible_rows(catalog)
                 preflight = populator_preflight(conn, args, catalog, eligible)
@@ -2743,6 +2778,8 @@ def scan_once(args):
     )
     if not env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", True) and not args.ignore_enabled_gate:
         raise RuntimeError("DUNE_ARTIFICIAL_EXCHANGE_ENABLED is false")
+    if not args.dry_run and buyer_identity_conflict(args):
+        raise RuntimeError("buyer controller must be separate from populator owner; native Exchange counts seeded orders against the buyer order-slot limit")
     catalog = load_catalog(args.catalog)
     state = load_state()
     conn = connect_db()

@@ -148,6 +148,13 @@ the buyer funded to `~1,000,000`. The buyer balance is not auto-refunded; refund
 periodically with `--fund-buyer`. Daily Solari injection is bounded by the global
 cap (`150000`).
 
+The buyer and populator identities must remain separate. Native Exchange counts
+all active orders owned by `in_instigator_id` toward
+`DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER`; if the buyer reuses the
+populator owner, thousands of seeded listings consume that capacity and native
+fulfill returns `item_id=0` without buying. The live host uses buyer controller
+`7` (a non-player Exchange terminal identity) and keeps populator owner `124`.
+
 ## Current Production Snapshot
 
 As of 2026-06-17 on `kspls0` (`dune_sb_1_4_5_0`), the market was re-evaluated
@@ -685,9 +692,14 @@ The long-running buyer supplies `DUNE_ARTIFICIAL_EXCHANGE_SERVICE_CONFIRM`
 automatically when live purchases are enabled. Without that service-only
 confirmation, the first eligible listing would stop the unit before calling the
 native fulfill function. One-shot commands still require the explicit
-`--confirm` argument. Production profiles should use a 60–120 second scan
-window and probability `1.0`; daily Solari, seller, template, catalog-price,
-and buyer-balance limits remain the economic controls.
+`--confirm` argument. The service remains active continuously and starts each
+scan after a randomized 60–120 second delay. Each eligible listing then gets an
+independent liquidity-tier probability gate; the established production profile
+is `0.10` (10%) for low liquidity, `0.25` (25%) for medium liquidity, and `0.50`
+(50%) for high liquidity. Daily Solari, seller, template, catalog-price, and
+buyer-balance limits remain the economic controls. A probability of `1.0` would
+mean every eligible listing is attempted, not that every native purchase will
+succeed.
 
 Dry-run scan:
 
@@ -1098,6 +1110,10 @@ Owner decision:
   buyer never purchases seeded stock.
 - On the current host, the DASH/Admin identity is `Paul` controller `124`; this
   is local state, not a portable default.
+- Use a separate non-player Exchange identity for
+  `DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID`; never reuse the populator
+  owner. The native order-slot limit defaults to `50` through
+  `DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER`.
 
 Service decision:
 
@@ -1415,6 +1431,7 @@ DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED=false
 DUNE_ARTIFICIAL_EXCHANGE_ID=2
 DUNE_ARTIFICIAL_EXCHANGE_ACCESS_POINT_ID=1
 DUNE_ARTIFICIAL_EXCHANGE_BUYER_CONTROLLER_ID=0
+DUNE_ARTIFICIAL_EXCHANGE_MAX_ORDERS_PER_PLAYER=50
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_LIMIT=25000
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MIN_SECONDS=60
 DUNE_ARTIFICIAL_EXCHANGE_SCAN_INTERVAL_MAX_SECONDS=120
@@ -1428,9 +1445,9 @@ DUNE_ARTIFICIAL_EXCHANGE_DAILY_SOLARI_CAP=50000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_SELLER_CAP=10000
 DUNE_ARTIFICIAL_EXCHANGE_DAILY_TEMPLATE_CAP=15000
 DUNE_ARTIFICIAL_EXCHANGE_MAX_BUY_PRICE_TOLERANCE_PCT=10
-DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=1.0
-DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=1.0
-DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=1.0
+DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=0.10
+DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=0.25
+DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=0.50
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED=true
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE=Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_EXCHANGE=chat.whispers

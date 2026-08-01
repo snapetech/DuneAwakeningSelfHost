@@ -903,7 +903,8 @@ market.
 
 The feature has two independent market roles:
 
-- Buyer: watches player sell orders, skips NPC/populator-owned orders, enforces catalog eligibility, max buy prices, blocked sellers, daily global/seller/template caps, and liquidity-tier buy probability, then uses the native fulfill function when live purchases are enabled.
+- Buyer: stays active as a systemd loop, scans every 60–120 seconds with a new random delay, skips NPC/populator-owned orders, enforces catalog eligibility, max buy prices, blocked sellers, daily global/seller/template caps, and independently samples eligible player listings using the 10%/25%/50% low/medium/high liquidity probabilities before calling native fulfill. These probabilities govern attempts; a native fulfill failure is not counted as a purchase.
+- The buyer controller must be a separate Exchange identity from the populator owner. Native Exchange counts every active order owned by the controller toward its order-slot limit; reusing the populator owner makes seeded stock consume the buyer's capacity and causes native fulfill to return `item_id=0` without buying.
 - Seller/populator: optionally posts DASH/Admin-owned `is_npc_order=true` listings from reviewed, validated, category-mapped catalog rows. Keep it stopped unless you intentionally want operator-seeded stock in the Exchange.
 
 Seller settlement is separate from both roles. Completed player-sale claims are inspected and can be claimed through a validated direct transaction that credits exactly the completed Solari value and deletes only the matched claim row. The unsafe native Solaris retrieve function is not used.

@@ -355,6 +355,12 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=True), args), "")
         self.assertEqual(bot.buyer_skip_reason(self.order(is_npc_order=False), args), "")
 
+    def test_buyer_identity_must_not_be_populator_owner(self):
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_ID"] = "124"
+        bot.FILE_ENV["DUNE_ARTIFICIAL_EXCHANGE_POPULATOR_OWNER_IDS"] = "124"
+        self.assertTrue(bot.buyer_identity_conflict(types.SimpleNamespace(buyer_controller_id=124)))
+        self.assertFalse(bot.buyer_identity_conflict(types.SimpleNamespace(buyer_controller_id=7)))
+
     def test_scan_dry_run_keeps_auto_claim_dry_run(self):
         class FakeConn:
             def __enter__(self):
