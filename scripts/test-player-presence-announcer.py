@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
@@ -234,6 +235,78 @@ class BaseRecoveryReminderTests(unittest.TestCase):
         self.assertNotEqual(sent[0]["jobId"], sent[1]["jobId"])
         self.assertFalse(state["baseRecoveryReminders"]["5247"]["active"])
         self.assertIn("restoredAt", state["baseRecoveryReminders"]["5247"])
+
+
+class VehicleRecoveryReminderTests(unittest.TestCase):
+    def test_status_uses_native_vehicle_backup_json_contract(self):
+        module = load_announcer_with_env({
+            "DUNE_ADMIN_BOT_ENV_FILE": "/tmp/dune-announcer-test-missing.env",
+        })
+        captured = {}
+
+        def fake_run(command, timeout=30):
+            captured["command"] = command
+
+            class Result:
+                returncode = 0
+                stdout = '[{"vehicleId":22279,"actorExists":true,"backupExists":true,"vehicleBackupState":true,"ownerActive":true,"restored":false}]\n'
+                stderr = ""
+
+            return Result()
+
+        config = {"accountId": 5247, "vehicleIds": [22279], "message": "recover"}
+        with unittest.mock.patch.object(module, "run", fake_run):
+            status = module.vehicle_recovery_reminder_status(config)
+        self.assertTrue(status["ok"])
+        self.assertFalse(status["restored"])
+        self.assertIn("state='VehicleBackup'", captured["command"][-1])
+        self.assertIn("array[22279]::bigint[]", captured["command"][-1])
+
+    def test_reminder_repeats_per_session_and_stops_after_all_vehicles_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = pathlib.Path(tmp) / "vehicle-reminders.json"
+            registry_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "reminders": {"5247": {
+                    "accountId": 5247,
+                    "vehicleIds": [22279, 22296],
+                    "message": "Mara, contact a server admin to recover your ornithopters.",
+                }},
+            }), encoding="utf-8")
+            state = {}
+            player = {
+                "name": "Mara Jade Skywalker",
+                "flsId": "MARA_FLS",
+                "lastLoginTime": "2026-07-31 19:00:00+00",
+            }
+            statuses = [
+                {"ok": True, "restored": False, "vehicles": [{"vehicleId": 22279, "restored": False}]},
+                {"ok": True, "restored": False, "vehicles": [{"vehicleId": 22279, "restored": False}]},
+                {"ok": True, "restored": False, "vehicles": [{"vehicleId": 22279, "restored": False}]},
+                {"ok": True, "restored": True, "vehicles": [{"vehicleId": 22279, "restored": True}, {"vehicleId": 22296, "restored": True}]},
+            ]
+            sent = []
+
+            def fake_private_message(target, message, job_id="player-presence-private-message"):
+                sent.append((target, message, job_id))
+                return {"ok": True}
+
+            file_env = {"DUNE_PLAYER_PRESENCE_VEHICLE_RECOVERY_REMINDERS_FILE": str(registry_path)}
+            with unittest.mock.patch.object(player_presence_announcer, "FILE_ENV", file_env), \
+                 unittest.mock.patch.object(player_presence_announcer, "vehicle_recovery_reminder_status", lambda config: statuses.pop(0)), \
+                 unittest.mock.patch.object(player_presence_announcer, "private_message", fake_private_message):
+                first = player_presence_announcer.vehicle_recovery_reminder({"5247": player}, state)
+                second = player_presence_announcer.vehicle_recovery_reminder({"5247": player}, state)
+                third = player_presence_announcer.vehicle_recovery_reminder({"5247": {**player, "lastLoginTime": "2026-08-01 19:00:00+00"}}, state)
+                fourth = player_presence_announcer.vehicle_recovery_reminder({"5247": {**player, "lastLoginTime": "2026-08-01 19:00:00+00"}}, state)
+
+            self.assertEqual(len(first), 1)
+            self.assertEqual(second, [])
+            self.assertEqual(len(third), 1)
+            self.assertEqual(fourth, [])
+            self.assertEqual(len(sent), 2)
+            self.assertFalse(state["vehicleRecoveryReminders"]["5247"]["active"])
+            self.assertIn("restoredAt", state["vehicleRecoveryReminders"]["5247"])
 
 
 class PublicAnnouncementRoutingTests(unittest.TestCase):

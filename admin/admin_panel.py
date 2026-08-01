@@ -91,6 +91,8 @@ import feature_readiness
 import feature_readiness_history
 import credential_lifecycle
 import base_recovery_reminders
+import vehicle_recovery_reminders
+import vehicle_retirement
 
 GM_CATALOG_PATH = CODE_ROOT / "scripts" / "gm-command-catalog.py"
 GM_CATALOG_SPEC = importlib.util.spec_from_file_location("gm_command_catalog", GM_CATALOG_PATH)
@@ -424,6 +426,11 @@ BASE_RETIREMENT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_RETIREMENT_M
 BASE_RETIREMENT_RECEIPTS = BACKUP_ROOT / "base-retirement"
 BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 CONFIRM_BASE_RECOVERY_REMINDER = "REMOVE BASE RECOVERY REMINDER"
+VEHICLE_RETIREMENT_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_RETIREMENT_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+VEHICLE_RETIREMENT_RECEIPTS = BACKUP_ROOT / "vehicle-retirement"
+VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+VEHICLE_RECOVERY_REMINDERS_FILE = pathlib.Path(os.environ.get("DUNE_PLAYER_PRESENCE_VEHICLE_RECOVERY_REMINDERS_FILE", str(BACKUPS_ROOT / "admin-bot" / "vehicle-recovery-reminders.json")))
+CONFIRM_VEHICLE_RECOVERY_REMINDER = "REMOVE VEHICLE RECOVERY REMINDER"
 BASE_COOLDOWN_MUTATIONS_ENABLED = os.environ.get("DUNE_ADMIN_BASE_COOLDOWN_MUTATIONS_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 BASE_COOLDOWN_RECEIPTS = BACKUP_ROOT / "base-cooldown"
 GAMEPLAY_PRESETS_ENABLED = os.environ.get("DUNE_GAMEPLAY_PRESETS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -1525,6 +1532,7 @@ def admin_panel_reload_paths():
         CODE_ROOT / "admin" / "moderation.py",
         CODE_ROOT / "admin" / "base_creator.py",
         CODE_ROOT / "admin" / "base_retirement.py",
+        CODE_ROOT / "admin" / "vehicle_retirement.py",
         CODE_ROOT / "admin" / "gameplay_presets.py",
         CODE_ROOT / "admin" / "command_console.py",
         CODE_ROOT / "admin" / "federated_auth.py",
@@ -2229,6 +2237,8 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_BASE_GALLERY_DATABASE": {"group": "Creator", "secret": False, "restart": True, "why": "Dedicated SQLite design/gallery/rating state path; never point this at the game database."},
     "DUNE_ADMIN_BASE_RETIREMENT_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for preview-bound, full-backup-first native base retirement into the game's recoverable base-backup system."},
     "DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for adding, replacing, and removing persistent player base-recovery reminder records."},
+    "DUNE_ADMIN_VEHICLE_RETIREMENT_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for preview-bound, full-backup-first native parked-vehicle retirement into the game's multi-vehicle recovery queue; cargo is preserved unless the exact wipe confirmation is requested."},
+    "DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for adding, replacing, and removing persistent parked-vehicle recovery reminder records."},
     "DUNE_ADMIN_BASE_COOLDOWN_MUTATIONS_ENABLED": {"group": "Creator", "secret": False, "restart": True, "why": "Second gate for stopped-map, fingerprint-bound, full-backup-first base pack-up cooldown reset."},
     "DUNE_GAMEPLAY_PRESETS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Loads the validated worm, threat, storm, harvest, day, hydration, and world preset catalog."},
     "DUNE_GAMEPLAY_PRESET_MUTATIONS_ENABLED": {"group": "Gameplay Presets", "secret": False, "restart": True, "why": "Second gate for backup-first preset apply and rollback. Preview remains available."},
@@ -2243,6 +2253,7 @@ ENV_KEY_DEFINITIONS = {
     "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_ENABLED": {"group": "Announcements", "secret": False, "restart": False, "why": "Enables one private message-of-the-day delivery for each detected player login session."},
     "DUNE_PLAYER_PRESENCE_PRIVATE_WELCOME_TEMPLATE": {"group": "Announcements", "secret": False, "restart": False, "why": "Message-of-the-day text; supports player-presence template fields such as {playername}, {count}, {server_name}, and {rules_url}."},
     "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDERS_FILE": {"group": "Announcements", "secret": False, "restart": False, "why": "Durable JSON registry of account, native BRT backup, totem, and per-login recovery reminders shared by the CLI, announcer, and admin panel."},
+    "DUNE_PLAYER_PRESENCE_VEHICLE_RECOVERY_REMINDERS_FILE": {"group": "Announcements", "secret": False, "restart": False, "why": "Durable JSON registry of account, native vehicle-recovery ids, and per-login recovery reminders shared by the CLI, announcer, and admin panel."},
     "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ENABLED": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder compatibility switch; once the durable registry exists, registry records take precedence."},
     "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_ACCOUNT_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder account id used only when the durable registry file does not yet exist."},
     "DUNE_PLAYER_PRESENCE_BASE_RECOVERY_REMINDER_BACKUP_ID": {"group": "Announcements", "secret": False, "restart": False, "why": "Legacy single-reminder native Base Reconstruction Tool backup id."},
@@ -2791,12 +2802,41 @@ def read_base_recovery_reminders(state=None):
         }
 
 
+def read_vehicle_recovery_reminders(state=None):
+    state = state if isinstance(state, dict) else {}
+    try:
+        registry_file = vehicle_recovery_reminders.registry_path()
+        reminders = vehicle_recovery_reminders.list_reminders()
+        rows = vehicle_recovery_reminders.merge_runtime(reminders, state)
+        try:
+            display_path = str(registry_file.relative_to(ROOT))
+        except ValueError:
+            display_path = str(registry_file)
+        return {
+            "ok": True,
+            "path": display_path,
+            "reminders": rows,
+            "mutationEnabled": bool(MUTATIONS_ENABLED and VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED),
+            "confirmPhrase": CONFIRM_VEHICLE_RECOVERY_REMINDER,
+        }
+    except (OSError, ValueError) as exc:
+        return {
+            "ok": False,
+            "path": str(vehicle_recovery_reminders.registry_path()),
+            "reminders": [],
+            "mutationEnabled": False,
+            "confirmPhrase": CONFIRM_VEHICLE_RECOVERY_REMINDER,
+            "error": str(exc)[:1000],
+        }
+
+
 def read_admin_digest_state():
     try:
         state = json.loads(ADMIN_DIGEST_STATE_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         state = {}
     reminder_state = read_base_recovery_reminders(state)
+    vehicle_reminder_state = read_vehicle_recovery_reminders(state)
     return {
         "path": str(ADMIN_DIGEST_STATE_FILE.relative_to(ROOT)),
         "updatedAt": state.get("updatedAt"),
@@ -2813,6 +2853,11 @@ def read_admin_digest_state():
         "baseRecoveryReminderMutationEnabled": reminder_state.get("mutationEnabled", False),
         "baseRecoveryReminderConfirm": reminder_state.get("confirmPhrase", CONFIRM_BASE_RECOVERY_REMINDER),
         "baseRecoveryReminderError": reminder_state.get("error"),
+        "vehicleRecoveryReminders": vehicle_reminder_state.get("reminders", []),
+        "vehicleRecoveryReminderPath": vehicle_reminder_state.get("path"),
+        "vehicleRecoveryReminderMutationEnabled": vehicle_reminder_state.get("mutationEnabled", False),
+        "vehicleRecoveryReminderConfirm": vehicle_reminder_state.get("confirmPhrase", CONFIRM_VEHICLE_RECOVERY_REMINDER),
+        "vehicleRecoveryReminderError": vehicle_reminder_state.get("error"),
     }
 
 
@@ -12674,6 +12719,27 @@ class Handler(BaseHTTPRequestHandler):
                     "cooldownRemainingSecondsKnown": False,
                     "requiredCapability": "world.write",
                 })
+            elif parsed.path == "/api/admin/vehicle-retirement":
+                self.require_token()
+                params = urllib.parse.parse_qs(parsed.query)
+                account_id = (params.get("account_id") or params.get("accountId") or [None])[0]
+                vehicle_id = (params.get("vehicle_id") or params.get("vehicleId") or [None])[0]
+                self.json({
+                    "ok": True,
+                    "mutationEnabled": MUTATIONS_ENABLED and VEHICLE_RETIREMENT_MUTATIONS_ENABLED,
+                    "vehicles": vehicle_retirement.scan(query, limit=(params.get("limit") or [100])[0], account_id=account_id, vehicle_id=vehicle_id),
+                    "receipts": vehicle_retirement.list_receipts(VEHICLE_RETIREMENT_RECEIPTS),
+                    "nativeFunction": vehicle_retirement.NATIVE_FUNCTION,
+                    "gameRecoverable": True,
+                    "destructiveDelete": False,
+                    "mapMustBeStopped": True,
+                    "ownerMustBeOffline": True,
+                    "backupRequired": True,
+                    "nativeRecoveryReason": vehicle_retirement.NATIVE_RECOVERY_REASON,
+                    "nativeRecoveryFunctionPreservesCargoUnlessRequested": True,
+                    "nativeRecoveryFunctionRemovesWorldPermissions": True,
+                    "requiredCapability": "world.write",
+                })
             elif parsed.path == "/api/presets/gameplay":
                 self.require_token()
                 catalog = gameplay_presets.load_catalog(GAMEPLAY_PRESETS_FILE)
@@ -13035,6 +13101,13 @@ class Handler(BaseHTTPRequestHandler):
                 except (FileNotFoundError, json.JSONDecodeError):
                     state = {}
                 self.json(read_base_recovery_reminders(state))
+            elif parsed.path == "/api/admin/vehicle-recovery-reminders":
+                self.require_token()
+                try:
+                    state = json.loads(ADMIN_DIGEST_STATE_FILE.read_text(encoding="utf-8"))
+                except (FileNotFoundError, json.JSONDecodeError):
+                    state = {}
+                self.json(read_vehicle_recovery_reminders(state))
             elif parsed.path == "/api/characters":
                 self.require_token()
                 params = urllib.parse.parse_qs(parsed.query)
@@ -13728,6 +13801,39 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("base retirement action must be preview, archive, cooldown-preview, or cooldown-reset")
                 self.audit("base-cooldown" if action.startswith("cooldown-") else "base-retirement", ok=True, retirement_action=action, totem_id=body.get("totemId", body.get("totem_id")), recovery_player_id=body.get("recoveryPlayerId", body.get("recovery_player_id")), base_backup_id=result.get("baseBackupId"), fingerprint=result.get("expectedFingerprint"), last_backup_timestamp=((result.get("verification") or {}).get("lastBackupTimestamp")))
                 self.json(result)
+            elif parsed.path == "/api/admin/vehicle-retirement":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "preview").strip().lower()
+                vehicle_ids = body.get("vehicleIds", body.get("vehicle_ids", body.get("vehicleId", body.get("vehicle_id"))))
+                if isinstance(vehicle_ids, (str, int)):
+                    vehicle_ids = [vehicle_ids]
+                require_ornithopters = bool(body.get("requireOrnithopters", body.get("require_ornithopters", True)))
+                allow_inventory_wipe = bool(body.get("allowInventoryWipe", body.get("allow_inventory_wipe", False)))
+                if action == "preview":
+                    result = vehicle_retirement.plan(query, vehicle_ids, body.get("accountId", body.get("account_id")), allow_inventory_wipe=allow_inventory_wipe, require_ornithopters=require_ornithopters)
+                elif action == "archive":
+                    if not MUTATIONS_ENABLED or not VEHICLE_RETIREMENT_MUTATIONS_ENABLED:
+                        raise PermissionError("vehicle retirement writes are disabled; enable the global gate and DUNE_ADMIN_VEHICLE_RETIREMENT_MUTATIONS_ENABLED=true")
+                    self.require_mutations()
+                    principal = access_control.public_principal(getattr(self, "auth_principal", None)) or {}
+                    actor = str(principal.get("id") or principal.get("displayName") or "owner-token")[:128]
+                    result = vehicle_retirement.archive(
+                        db_connect,
+                        create_db_backup,
+                        VEHICLE_RETIREMENT_RECEIPTS,
+                        vehicle_ids=vehicle_ids,
+                        account_id=body.get("accountId", body.get("account_id")),
+                        expected_fingerprint=body.get("expectedFingerprint", body.get("expected_fingerprint")),
+                        confirm=body.get("confirm"),
+                        principal=actor,
+                        allow_inventory_wipe=allow_inventory_wipe,
+                        require_ornithopters=require_ornithopters,
+                    )
+                else:
+                    raise ValueError("vehicle retirement action must be preview or archive")
+                self.audit("vehicle-retirement", ok=True, vehicle_retirement_action=action, vehicle_ids=vehicle_ids, account_id=body.get("accountId", body.get("account_id")), fingerprint=result.get("expectedFingerprint"), inventory_wipe=result.get("nativeInventoryWipe"), receipt=result.get("receipt"))
+                self.json(result)
             elif parsed.path == "/api/admin/base-recovery-reminders":
                 self.require_token()
                 body = parse_body(self)
@@ -13769,6 +13875,32 @@ class Handler(BaseHTTPRequestHandler):
                     self.json({"ok": True, "action": "remove", "removed": removed, **read_base_recovery_reminders()})
                 else:
                     raise ValueError("base-recovery reminder action must be upsert or remove")
+            elif parsed.path == "/api/admin/vehicle-recovery-reminders":
+                self.require_token()
+                body = parse_body(self)
+                action = str(body.get("action") or "upsert").strip().lower()
+                if action in ("add", "upsert", "replace"):
+                    self.require_mutations()
+                    if not VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED:
+                        raise PermissionError("vehicle-recovery reminder writes are disabled; enable DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true")
+                    reminder = vehicle_recovery_reminders.upsert_reminder(
+                        body.get("accountId", body.get("account_id")),
+                        body.get("vehicleIds", body.get("vehicle_ids", body.get("vehicleId", body.get("vehicle_id")))),
+                        body.get("message") or vehicle_recovery_reminders.DEFAULT_MESSAGE,
+                    )
+                    self.audit("vehicle-recovery-reminder-upsert", ok=True, account_id=reminder.get("accountId"), vehicle_ids=reminder.get("vehicleIds"))
+                    self.json({"ok": True, "action": "upsert", "reminder": reminder, **read_vehicle_recovery_reminders()})
+                elif action in ("remove", "delete"):
+                    self.require_mutations()
+                    if not VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED:
+                        raise PermissionError("vehicle-recovery reminder writes are disabled; enable DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true")
+                    require_confirmation(body, CONFIRM_VEHICLE_RECOVERY_REMINDER)
+                    account_id = body.get("accountId", body.get("account_id"))
+                    removed = vehicle_recovery_reminders.remove_reminder(account_id)
+                    self.audit("vehicle-recovery-reminder-remove", ok=True, account_id=account_id, removed=bool(removed))
+                    self.json({"ok": True, "action": "remove", "removed": removed, **read_vehicle_recovery_reminders()})
+                else:
+                    raise ValueError("vehicle-recovery reminder action must be upsert or remove")
             elif parsed.path == "/api/presets/gameplay":
                 self.require_token()
                 if not GAMEPLAY_PRESETS_ENABLED:
@@ -22889,6 +23021,38 @@ function bindBaseRecoveryReminderControls(data){
   document.getElementById('baseRecoveryRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => digests(loadSerial)));
   document.querySelectorAll('[data-base-recovery-remove]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Removing...', () => removeBaseRecoveryReminder(button.dataset.baseRecoveryRemove, data.confirmPhrase || 'REMOVE BASE RECOVERY REMINDER'))));
 }
+function vehicleRecoveryReminderPanel(data){
+  const rows = data.reminders || [];
+  const enabled = !!data.mutationEnabled;
+  const confirmPhrase = data.confirmPhrase || 'REMOVE VEHICLE RECOVERY REMINDER';
+  const body = rows.length ? rows.map(row => {
+    const status = row.restoredAt || row.lastStatus?.restored ? 'restored' : (row.active === false ? 'paused' : 'active');
+    const statusClass = status === 'restored' ? 'ok' : status === 'active' ? 'warn' : '';
+    const vehicles = (row.vehicleIds || []).join(', ');
+    return `<div class="eventItem"><div class="eventItemHead"><b>${esc(row.accountId)} · ${esc(row.playerName || 'unknown player')}</b><span class="pill ${statusClass}">${esc(status)}</span><span class="pill">${row.online ? 'online' : 'offline'}</span></div><div class="muted">Vehicles ${esc(vehicles)} · checked ${esc(row.lastStatusCheckedAt || 'not checked')} · last sent ${esc(row.lastSentAt || 'not sent')}</div><div>${esc(row.message || '')}</div><div class="commandBar"><button data-vehicle-recovery-remove="${esc(row.accountId)}" ${enabled ? '' : 'disabled'} class="danger">Remove reminder</button></div></div>`;
+  }).join('') : '<div class="muted">No persistent vehicle-recovery reminders configured.</div>';
+  return `<div class="panelBand"><div class="sectionHeader"><div><h2>Vehicle Recovery Reminders</h2><p class="muted">Each record sends one private Paul message per detected login session until conservative native VehicleRecovery/VehicleBackup status proves every listed vehicle was restored. Removing a record stops future delivery; it does not alter the player, vehicle, backup, inventory, or credits.</p></div><div class="toolbar"><span class="pill ${enabled ? 'warn' : 'ok'}">writes ${enabled ? 'enabled' : 'disabled'}</span><span class="pill">${esc(rows.length)} configured</span></div></div><p class="muted">Registry: <code>${esc(data.path || 'backups/admin-bot/vehicle-recovery-reminders.json')}</code>${data.error ? ` · <span class="bad">${esc(data.error)}</span>` : ''}</p><div class="twoCol"><div><h3>Add or replace reminder</h3><div class="grid"><label>Account id<input id="vehicleRecoveryAccountId" type="number" min="1" step="1" placeholder="5247"></label><label>Vehicle ids<input id="vehicleRecoveryVehicleIds" placeholder="22279,22296"></label></div><label>Private reminder message<textarea id="vehicleRecoveryMessage" rows="4" maxlength="4096">Your parked ornithopters are preserved in the server's native vehicle recovery queue. When you return, please contact a server admin so we can recover them for you.</textarea></label><div class="commandBar"><button id="vehicleRecoveryAddBtn" class="primary" ${enabled ? '' : 'disabled'}>Save reminder</button><button id="vehicleRecoveryRefreshBtn">Refresh status</button></div><p class="muted">Writes require both <code>DUNE_ADMIN_MUTATIONS_ENABLED=true</code> and <code>DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED=true</code>.</p></div><div><h3>Configured reminders</h3><div class="eventList">${body}</div><p class="muted">Remove confirmation: <code>${esc(confirmPhrase)}</code></p></div></div></div>`;
+}
+async function saveVehicleRecoveryReminder(){
+  const accountId = document.getElementById('vehicleRecoveryAccountId')?.value || '';
+  const vehicleIds = (document.getElementById('vehicleRecoveryVehicleIds')?.value || '').split(',').map(value => value.trim()).filter(Boolean);
+  const message = document.getElementById('vehicleRecoveryMessage')?.value || '';
+  if (!accountId || !vehicleIds.length) throw new Error('Account id and at least one vehicle id are required.');
+  await api('/api/admin/vehicle-recovery-reminders', {method:'POST', body:JSON.stringify({action:'upsert',accountId,vehicleIds,message})});
+  notify('Vehicle-recovery reminder saved', 'ok');
+  await digests(loadSerial);
+}
+async function removeVehicleRecoveryReminder(accountId, confirmPhrase){
+  if (!confirm(`Remove the persistent vehicle-recovery reminder for account ${accountId}? Future login messages will stop.`)) return;
+  await api('/api/admin/vehicle-recovery-reminders', {method:'POST', body:JSON.stringify({action:'remove',accountId,confirm:confirmPhrase})});
+  notify(`Vehicle-recovery reminder removed for account ${accountId}`, 'ok');
+  await digests(loadSerial);
+}
+function bindVehicleRecoveryReminderControls(data){
+  document.getElementById('vehicleRecoveryAddBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Saving...', saveVehicleRecoveryReminder));
+  document.getElementById('vehicleRecoveryRefreshBtn')?.addEventListener('click', e => runAction(e.currentTarget, 'Refreshing...', () => digests(loadSerial)));
+  document.querySelectorAll('[data-vehicle-recovery-remove]').forEach(button => button.addEventListener('click', e => runAction(e.currentTarget, 'Removing...', () => removeVehicleRecoveryReminder(button.dataset.vehicleRecoveryRemove, data.confirmPhrase || 'REMOVE VEHICLE RECOVERY REMINDER'))));
+}
 async function digests(serial=loadSerial){
   const data = await api('/api/admin/digests');
   if (serial !== loadSerial) return;
@@ -22896,8 +23060,10 @@ async function digests(serial=loadSerial){
   const adminEntries = entries.filter(e => e.audience === 'admin');
   const publicEntries = entries.filter(e => e.audience === 'public');
   const reminderData = {reminders:data.baseRecoveryReminders || [], path:data.baseRecoveryReminderPath, mutationEnabled:data.baseRecoveryReminderMutationEnabled, confirmPhrase:data.baseRecoveryReminderConfirm, error:data.baseRecoveryReminderError};
-  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div>${baseRecoveryReminderPanel(reminderData)}<div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
+  const vehicleReminderData = {reminders:data.vehicleRecoveryReminders || [], path:data.vehicleRecoveryReminderPath, mutationEnabled:data.vehicleRecoveryReminderMutationEnabled, confirmPhrase:data.vehicleRecoveryReminderConfirm, error:data.vehicleRecoveryReminderError};
+  view.innerHTML = `<div class="pageStack"><div class="sectionHeader"><h2>Admin Digests</h2><div class="toolbar"><span class="pill">${esc(entries.length)} retained</span><span class="pill">${esc(data.updatedAt || 'not updated')}</span><button data-jump="ops">Ops</button><button data-jump="security">Audit</button></div></div><div class="metricGrid">${metric('Map Health State', data.mapHealthState || 'unknown')}${metric('Daily Peak', (data.dailyPeak || {}).peak ?? 0)}${metric('Online Snapshot', Object.keys(data.onlinePlayers || {}).length)}${metric('State File', data.path || '')}</div>${baseRecoveryReminderPanel(reminderData)}${vehicleRecoveryReminderPanel(vehicleReminderData)}<div class="twoCol"><div class="panelBand"><h2>Admin-Only Digests</h2>${digestList(adminEntries)}</div><div class="panelBand"><h2>Public Notices</h2>${digestList(publicEntries)}</div></div><details class="panelBand"><summary>Last Send Markers</summary>${table(Object.entries(data.lastSent || {}).map(([key,value]) => ({key, value})))}</details><details class="panelBand"><summary>Raw Digest State</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details></div>`;
   bindBaseRecoveryReminderControls(reminderData);
+  bindVehicleRecoveryReminderControls(vehicleReminderData);
 }
 async function carePackages(serial=loadSerial){
   const [data, roster] = await Promise.all([

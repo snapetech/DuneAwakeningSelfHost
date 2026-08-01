@@ -13,6 +13,7 @@ import time
 
 from dune_whisper_route import whisper_route_for_fls_id
 import base_recovery_reminders
+import vehicle_recovery_reminders
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -1426,6 +1427,80 @@ def base_recovery_reminder(current, state):
     return results
 
 
+def vehicle_recovery_reminder_status(config):
+    """Return conservative status for every native parked-vehicle backup."""
+    sql = vehicle_recovery_reminders.status_sql(config)
+    try:
+        result = run(
+            compose_cmd("exec", "-T", "postgres", "psql", "-U", "dune", "-d", DB, "-At", "-c", sql),
+            timeout=int(env("DUNE_PLAYER_PRESENCE_SQL_TIMEOUT_SECONDS", "10")),
+        )
+    except Exception as exc:
+        return {"ok": False, "restored": False, "vehicles": [], "error": str(exc)}
+    if result.returncode != 0:
+        return {"ok": False, "restored": False, "vehicles": [], "error": result.stderr.strip() or "vehicle recovery status query failed"}
+    return vehicle_recovery_reminders.parse_status_output(result.stdout)
+
+
+def configured_vehicle_recovery_reminders():
+    configured_path = env("DUNE_PLAYER_PRESENCE_VEHICLE_RECOVERY_REMINDERS_FILE", "").strip()
+    path = vehicle_recovery_reminders.registry_path(configured_path or None)
+    if not path.exists():
+        return []
+    return vehicle_recovery_reminders.list_reminders(path)
+
+
+def vehicle_recovery_reminder(current, state):
+    """Whisper one parked-vehicle recovery reminder per login session."""
+    results = []
+    try:
+        reminders = configured_vehicle_recovery_reminders()
+    except Exception as exc:
+        return [{"event": "vehicle-recovery-reminder", "ok": False, "error": str(exc)}]
+    runtime = state.setdefault("vehicleRecoveryReminders", {})
+    for config in reminders:
+        account_id = str(config["accountId"])
+        entry = runtime.setdefault(account_id, {})
+        fingerprint = vehicle_recovery_reminders.config_fingerprint(config)
+        if entry.get("configFingerprint") != fingerprint:
+            entry.clear()
+            entry["configFingerprint"] = fingerprint
+        status = vehicle_recovery_reminder_status(config)
+        entry["lastStatus"] = status
+        entry["lastStatusCheckedAt"] = now_iso()
+        if status.get("restored") or entry.get("restoredAt"):
+            if status.get("restored") and not entry.get("restoredAt"):
+                entry["restoredAt"] = now_iso()
+            entry["active"] = False
+            continue
+        entry["active"] = True
+        player = current.get(account_id)
+        if not player:
+            continue
+        session = player_presence_session(player) or f"online:{player_fls_id(player) or account_id}"
+        if entry.get("lastSentSession") == session:
+            continue
+        session_key = hashlib.sha256(session.encode("utf-8")).hexdigest()[:16]
+        job_id = f"player-presence-vehicle-recovery-{account_id}-{session_key}"
+        send = private_message(player, config["message"], job_id)
+        result = {
+            "event": "vehicle-recovery-reminder",
+            "accountId": account_id,
+            "player": player_name(player),
+            "vehicleIds": config["vehicleIds"],
+            "session": session,
+            "message": config["message"],
+            "status": status,
+            "send": send,
+        }
+        results.append(result)
+        entry["lastAttemptAt"] = now_iso()
+        if send.get("ok"):
+            entry["lastSentSession"] = session
+            entry["lastSentAt"] = now_iso()
+    return results
+
+
 def private_join_message(player, message):
     return private_message(player, message, "player-presence-private-welcome")
 
@@ -1538,6 +1613,7 @@ def check_once():
     state = load_state()
     current = online_players()
     base_recovery_reminder_results = base_recovery_reminder(current, state)
+    vehicle_recovery_reminder_results = vehicle_recovery_reminder(current, state)
     previous = state.get("onlinePlayers")
     current_ids = set(current)
     previous_ids = set(previous or {})
@@ -2208,6 +2284,7 @@ def check_once():
         "privateWelcomeMessages": private_welcome_results,
         "automatedPrivateMessages": automated_private_results,
         "baseRecoveryReminderMessages": base_recovery_reminder_results,
+        "vehicleRecoveryReminderMessages": vehicle_recovery_reminder_results,
         "starterBaseToolGrants": starter_grant_results,
         "starterBaseToolMessages": starter_message_results,
         "starterEmoteGrants": starter_emote_grant_results,

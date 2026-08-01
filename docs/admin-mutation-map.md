@@ -107,6 +107,33 @@ dune.player_virtual_currency_balances
 
 It supports add/set by `(player_controller_id, currency_id)`.
 
+## Native Vehicle Recovery Retirement
+
+The narrow recoverable vehicle workflow uses the game's multi-vehicle recovery
+function:
+
+```sql
+dune.store_recovered_vehicles_wiped_before_spawn(
+  vehicle_ids bigint[], reason dune.recoveredvehiclereason, delete_items boolean
+)
+```
+
+`POST /api/admin/vehicle-retirement` and `scripts/vehicle-retirement.py` are
+preview-bound wrappers. They require one offline rank-1 owner per vehicle, a
+stopped map, an unchanged content fingerprint, a full PostgreSQL dump,
+serializable row and advisory locks, and post-call proof of
+`recovered_vehicles`, `actor_state='VehicleRecovery'`, and zero world
+permission rows. The vehicle actors remain in the native recovery queue; the
+map must be restarted before the staged actors are considered cleared.
+
+The recovery queue preserves ordinary vehicle cargo by default. An operator may
+explicitly request `delete_items=true` with the inventory-wipe option and the
+exact `AND WIPE VEHICLE INVENTORY` confirmation. The private receipt snapshots
+actor, permissions, inventories, items, and modules before the native call.
+This workflow does not change player currency or credits. Native restore remains
+an operator-reviewed action; generic vehicle spawn/teleport/delete mutations
+stay blocked.
+
 ## Solari Grants
 
 The panel exposes two explicit Solari grant helpers:

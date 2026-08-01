@@ -64,6 +64,17 @@ Keep `DUNE_ADMIN_BASE_RECOVERY_REMINDER_MUTATIONS_ENABLED=false` unless the
 authenticated panel should be allowed to add, replace, or remove reminder
 records; the global `DUNE_ADMIN_MUTATIONS_ENABLED` gate is required as well.
 
+Parked vehicle retirement and recovery reminders use the same worker and panel
+path. The native multi-vehicle recovery contract, including its optional
+ordinary-cargo wipe, full-dump receipt, and restore proof, is documented in
+[`vehicle-recovery.md`](vehicle-recovery.md). The additional settings are:
+
+```env
+DUNE_ADMIN_VEHICLE_RETIREMENT_MUTATIONS_ENABLED=false
+DUNE_ADMIN_VEHICLE_RECOVERY_REMINDER_MUTATIONS_ENABLED=false
+DUNE_PLAYER_PRESENCE_VEHICLE_RECOVERY_REMINDERS_FILE=backups/admin-bot/vehicle-recovery-reminders.json
+```
+
 ## Player Presence Announcements
 
 `scripts/player-presence-announcer.py` is a lightweight companion loop for chatty player-presence events. It polls `dune.player_state`, stores the previous online set in `backups/admin-bot/player-presence.json`, and announces only transitions after the first baseline poll.
@@ -221,6 +232,33 @@ message text, active/restored state, online/player name, last status check, and
 last send time. Saving a record uses `POST /api/admin/base-recovery-reminders`
 and requires both mutation gates. Removal requires the exact confirmation
 phrase shown in the panel and is audited; it only removes the reminder record.
+
+Vehicle retirement is a separate preview/archive action and is never performed
+by the presence worker. It uses the native multi-vehicle `VehicleRecovery`
+queue (the one-row-per-character `VehicleBackup` slot cannot hold multiple
+vehicles). Use the CLI after stopping the owning map and reviewing the preview;
+cargo is preserved unless the exact wipe option is supplied:
+
+```bash
+./scripts/vehicle-retirement.py list --account-id 5247
+./scripts/vehicle-retirement.py preview --account-id 5247 --vehicle-id 22279 --vehicle-id 22296
+./scripts/vehicle-retirement.py archive --account-id 5247 --vehicle-id 22279 --vehicle-id 22296 --expected-fingerprint <fingerprint> --confirm 'ARCHIVE THOPTERS 22279,22296'
+```
+
+Vehicle reminders are managed independently and repeat until every listed
+native recovery or backup row is restored:
+
+```bash
+./scripts/vehicle-recovery-reminder.py add --account-id 5247 --vehicle-id 22279 --vehicle-id 22296
+./scripts/vehicle-recovery-reminder.py list
+./scripts/vehicle-recovery-reminder.py check --account-id 5247
+./scripts/vehicle-recovery-reminder.py remove --account-id 5247
+```
+
+The Admin Digests page exposes the same vehicle records with vehicle ids,
+restore proof, online state, and last-send markers. Removing a vehicle reminder
+does not touch the vehicle, native recovery row, private inventory snapshot,
+player, or credits.
 
 Automated private messages are derived from local state and operator config rather than hard-coded server details. These use the private helper and should render as whispers/private messages:
 

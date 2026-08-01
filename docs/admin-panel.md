@@ -302,7 +302,7 @@ server {
 - Local/upstream health checks for Postgres reachability, the Dune account portal, and public Dune/Funcom HTTP reachability.
 - Restart-announcement scheduler under Ops. It accepts a restart time, message, and repeat interval, persists state under `backups/admin-panel/announcements.json`, and invokes `DUNE_ADMIN_ANNOUNCE_COMMAND` for each delivery attempt.
 - Scheduled restart planner under Ops. It targets all components, core services, the service layer, all game maps, or key individual maps. Jobs persist under `backups/admin-panel/restart-jobs.json` and invoke `DUNE_ADMIN_RESTART_COMMAND` only when execution is explicitly enabled.
-- Admin Digests includes persistent Base Recovery Reminders. Each record binds an account to its native BRT backup and base totem, shows the worker's latest conservative restore proof and player presence, and sends one Paul whisper per detected login session until restoration. Add/replace and remove actions are separately gated and audited; removing a record never changes the player, base, backup, inventory, or credits.
+- Admin Digests includes persistent Base Recovery Reminders and Vehicle Recovery Reminders. Each record binds an account to native BRT or `VehicleRecovery`/`VehicleBackup` ids, shows the worker's latest conservative restore proof and player presence, and sends one Paul whisper per detected login session until restoration. Add/replace and remove actions are separately gated and audited; removing a record never changes the player, base/vehicle, recovery row, inventory, or credits. Vehicle Retirement adds a stopped-map, full-backup-first native vehicle archival path with a private pre-action cargo snapshot; see [`vehicle-recovery.md`](vehicle-recovery.md).
 - Player roster split into currently online players and offline players, plus search and detail views.
 - Currency/progression table visibility.
 - `.env` operations editor for install, world, network, access, secret, and admin-panel knobs. Secret fields are admin-token protected, rendered as password inputs, and returned blank unless a replacement is typed.
@@ -1311,6 +1311,29 @@ requires the exact `REMOVE BASE RECOVERY REMINDER` confirmation phrase:
 Every write is included in the authenticated audit path. Removing a reminder
 only stops future messages; it does not delete or modify the player, base,
 native BRT backup, inventory, or credits.
+
+## Vehicle Retirement and Recovery Reminders
+
+The Admin Panel exposes **Vehicle Retirement** at
+`GET/POST /api/admin/vehicle-retirement`. It is a preview-bound wrapper around
+the native multi-vehicle
+`dune.store_recovered_vehicles_wiped_before_spawn(bigint[],recoveredvehiclereason,boolean)` contract. The scan shows vehicle class, rank-1 owner, map/partition activity, native state, cargo/module counts, and a content fingerprint. Archive requires an explicitly offline owner, a stopped map, a full database dump, advisory/row locks, the unchanged preview fingerprint, and post-call proof of `recovered_vehicles`, `VehicleRecovery`, and removed world permission rows.
+
+The native recovery queue preserves ordinary vehicle inventory by default.
+Selecting **Allow inventory wipe** explicitly requests the native `delete_items`
+behavior and requires `AND WIPE VEHICLE INVENTORY` in the confirmation. A
+private receipt snapshots actor, vehicle, permissions, inventories, items,
+actor state, and modules before the native call. The vehicle actors remain
+recoverable; the operation does not change player currency or credits. See
+[`vehicle-recovery.md`](vehicle-recovery.md).
+
+Admin Digests also includes **Vehicle Recovery Reminders**, backed by
+`backups/admin-bot/vehicle-recovery-reminders.json` and the
+`scripts/vehicle-recovery-reminder.py` CLI. It shows every account/vehicle
+record, conservative restore status across both native backup systems, online
+state, and last-send time. Add or replace requires both mutation gates; removal
+requires the exact `REMOVE VEHICLE RECOVERY REMINDER` phrase and changes only
+future messaging.
 
 ## Restart Announcements
 
