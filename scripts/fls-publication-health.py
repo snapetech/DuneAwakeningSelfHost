@@ -25,6 +25,14 @@ DIRECTOR_FALLBACK_HEALTH_CONTAINERS = [
 ]
 LOG_SOURCE_NOTES = {}
 
+
+def configured_log_tail():
+    """Return a bounded log tail so health checks cannot hang on chatty services."""
+    try:
+        return max(100, int(os.environ.get("DUNE_FLS_PUBLICATION_HEALTH_LOG_TAIL", "2000")))
+    except (TypeError, ValueError):
+        return 2000
+
 SECRET_PATTERNS = [
     (re.compile(r"eyJ[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+"), "[redacted-jwt]"),
     (re.compile(r"(ServiceAuthToken: )\S+"), r"\1[redacted]"),
@@ -49,7 +57,17 @@ def redact(text):
 
 
 def run(cmd, timeout=20):
-    return subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    try:
+        return subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        stderr = f"{stderr}\ncommand timed out after {timeout}s".strip()
+        return subprocess.CompletedProcess(cmd, 124, stdout, stderr)
 
 
 def decode_chunked_body(body):
@@ -219,7 +237,10 @@ def service_logs(base_cmd, service, since):
             LOG_SOURCE_NOTES[service] = fallback_note
             return logs, None
         return "", f"{service} container is not running"
-    result = run(base_cmd + ["logs", "--since", since, service], timeout=20)
+    result = run(
+        base_cmd + ["logs", "--since", since, "--tail", str(configured_log_tail()), service],
+        timeout=20,
+    )
     text = redact((result.stdout or "") + "\n" + (result.stderr or ""))
     if result.returncode != 0:
         return text, f"{service} logs failed"

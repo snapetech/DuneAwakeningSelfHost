@@ -35,6 +35,12 @@ or warming are shown as `On demand` or `Warming`; they do not make the server
 degraded. `Player access` also requires healthy FLS publication and enough game
 RabbitMQ connections for the required core.
 
+The FLS publication probe reads a bounded recent log tail (default `2000` lines,
+controlled by `DUNE_FLS_PUBLICATION_HEALTH_LOG_TAIL`) so high-volume Director
+logs cannot make the one-minute status renderer time out. A probe timeout is
+reported as degraded rather than aborting the renderer; active-player data is
+still published independently.
+
 Override the required public/core partitions only when the always-on policy is
 intentionally changed:
 

@@ -271,6 +271,7 @@ class StaticStatusRenderTest(unittest.TestCase):
         self.assertIn("<dd>Online</dd>", html)
         self.assertIn("<dd>Healthy</dd>", html)
         self.assertIn("<dd>Limited</dd>", html)
+        self.assertIn("Server-browser publication is catching up. Existing players remain connected.", html)
 
     def test_runtime_detail_describes_warm_on_demand_policy(self):
         html = self.render_status({"jobs": []})

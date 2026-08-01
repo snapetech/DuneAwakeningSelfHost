@@ -173,7 +173,12 @@ if [[ -d "$DUNE_ROOT" ]] && (cd "$DUNE_ROOT" && timeout "$STATUS_TIMEOUT_SECONDS
     else
       access_class="status-warn"
       access_text="Limited"
-      status_detail_text="The core world is warming. Player access may take a few minutes."
+      if [[ "$fls_healthy" != "true" && "$core_ready_alive" -eq "$core_partitions" \
+          && "$game_sg_connections" -ge "$core_partitions" ]]; then
+        status_detail_text="Server-browser publication is catching up. Existing players remain connected."
+      else
+        status_detail_text="The core world is warming. Player access may take a few minutes."
+      fi
     fi
   else
     server_class="status-down"
