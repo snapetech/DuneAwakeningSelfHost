@@ -44,10 +44,26 @@ cat >"$BIN/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$LOG"
-if [[ "$1" == ps ]]; then printf 'aaa\nbbb\n'; exit 0; fi
+if [[ "$1" == compose ]]; then
+  printf 'survival\npostgres\ndeep-desert-pvp\n'
+  exit 0
+fi
+if [[ "$1" == ps ]]; then
+  if [[ "${TEST_MISSING_SERVICE:-false}" == true ]]; then
+    printf 'aaa\nbbb\nccc\n'
+  else
+    printf 'aaa\nbbb\n'
+  fi
+  exit 0
+fi
 if [[ "$1" == inspect ]]; then
   id="${@: -1}"
-  if [[ "$*" == *'com.docker.compose.service'* ]]; then [[ "$id" == aaa ]] && echo survival || echo postgres
+  if [[ "$*" == *'com.docker.compose.service'* ]]; then
+    case "$id" in
+      aaa) echo survival ;;
+      bbb) echo postgres ;;
+      ccc) echo uncovered ;;
+    esac
   elif [[ "$*" == *'{{.Name}}'* ]]; then echo "/test-$id"
   else [[ "$id" == aaa ]] && echo '' || echo '2,3,6,7'
   fi
@@ -62,6 +78,12 @@ echo "${TEST_HOSTNAME:-kspld0}"
 EOF
 chmod +x "$BIN/docker" "$BIN/hostname"
 export PATH="$BIN:$PATH" LOG
+
+PROFILE_OVERLAY="$TMP_DIR/compose.profiles.yaml"
+CONTAINER_RUNTIME="$BIN/docker" python3 "$ROOT_DIR/scripts/generate-cpu-affinity.py" \
+  --env-file "$ENV_FILE" --output "$PROFILE_OVERLAY" >/dev/null
+grep -q '^  deep-desert-pvp:' "$PROFILE_OVERLAY"
+grep -Fq -- '--profile *' "$LOG"
 
 preview="$($ROOT_DIR/scripts/cpu-affinity.sh --env-file "$ENV_FILE" --overlay "$OVERLAY" --project test apply)"
 grep -q 'Dry-run only' <<<"$preview"
@@ -81,5 +103,11 @@ result="$($ROOT_DIR/scripts/cpu-affinity.sh --env-file "$ENV_FILE" --overlay "$O
 grep -q '1 container(s) updated' <<<"$result"
 grep -q '^update --cpuset-cpus 0,1,4,5 aaa$' "$LOG"
 grep -q '^DUNE_CPU_AFFINITY_ENABLED=true$' "$ENV_FILE"
+
+export TEST_MISSING_SERVICE=true
+if "$ROOT_DIR/scripts/cpu-affinity.sh" --env-file "$ENV_FILE" --overlay "$OVERLAY" --project test status >/dev/null 2>&1; then
+  echo "CPU affinity accepted an uncovered running service" >&2
+  exit 1
+fi
 
 echo "CPU affinity tests passed"

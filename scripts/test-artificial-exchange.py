@@ -284,7 +284,7 @@ class ArtificialExchangeBotTest(unittest.TestCase):
         self.assertEqual(captured["command"][0], "/bin/echo")
         self.assertIn("2x ItemA", captured["command"][1])
         self.assertIn("2468 Solari", captured["command"][1])
-        self.assertIn("next relog", captured["command"][1])
+        self.assertIn("bank after your next relog", captured["command"][1])
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_EXCHANGE"], "chat.whispers")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_CHANNEL"], "Whispers")
         self.assertEqual(captured["env"]["DUNE_ANNOUNCE_CHAT_USER_NAME_TO"], "Seller")
@@ -327,6 +327,76 @@ class ArtificialExchangeBotTest(unittest.TestCase):
     def test_settlement_claim_key_includes_idempotency_fields(self):
         row = {"order_id": 7, "source_order_id": None, "original_order_id": 5, "completion_type": 1}
         self.assertEqual(bot.settlement_claim_key(row), "7::5:1")
+
+    def test_seller_solari_credit_updates_bank_and_exchange_mirror(self):
+        class FakeCursor:
+            def __init__(self):
+                self.calls = []
+                self.responses = [
+                    {"balance": 1000},
+                    {"balance": 36001000},
+                    {"solari_balance": 36001000},
+                    {"balance": 36001000},
+                ]
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+
+            def fetchone(self):
+                return self.responses.pop(0)
+
+        cur = FakeCursor()
+        result = bot.credit_solaris_bank(cur, 10, 36_000_000, owner_id=10)
+
+        self.assertEqual(result, {"before_balance": 1000, "after_balance": 36001000, "credited": 36_000_000})
+        sql = "\n".join(statement for statement, _ in cur.calls)
+        self.assertIn("player_virtual_currency_balances", sql)
+        self.assertIn("dune_exchange_users", sql)
+        self.assertNotIn("dune.items", sql)
+        self.assertNotIn("save_item", sql)
+
+    def test_seller_claim_keeps_price_and_credits_bank_not_inventory(self):
+        class FakeCursor:
+            def __init__(self):
+                self.calls = []
+                self.responses = [
+                    {
+                        "owner_id": 10,
+                        "item_id": None,
+                        "item_price": 18_000_000,
+                        "completion_type": 1,
+                        "stack_size": 2,
+                        "original_order_id": 5,
+                    },
+                    {"still_exists": False},
+                ]
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+
+            def fetchone(self):
+                return self.responses.pop(0)
+
+        cur = FakeCursor()
+        row = {
+            "order_id": 7,
+            "owner_id": 10,
+            "expected_solari": 36_000_000,
+            "original_order_id": 5,
+        }
+        bank_credit = {"before_balance": 1000, "after_balance": 36001000, "credited": 36_000_000}
+        with mock.patch.object(bot, "credit_solaris_bank", return_value=bank_credit) as credit:
+            result = bot.execute_direct_seller_claim(cur, row)
+
+        credit.assert_called_once_with(cur, 10, 36_000_000, owner_id=10)
+        self.assertEqual(result["total_item_value"], 36_000_000)
+        self.assertEqual(result["credited"], 36_000_000)
+        self.assertEqual(result["method"], "validated_bank_solaris_balance")
+        self.assertEqual(result["before_bank_balance"], 1000)
+        self.assertEqual(result["after_bank_balance"], 36001000)
+        sql = "\n".join(statement for statement, _ in cur.calls)
+        self.assertNotIn("dune.items", sql)
+        self.assertNotIn("save_item", sql)
 
     def test_env_bool_defaults_and_overrides(self):
         self.assertFalse(bot.env_bool("DUNE_ARTIFICIAL_EXCHANGE_ENABLED", False))

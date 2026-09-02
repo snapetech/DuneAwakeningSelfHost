@@ -35,6 +35,13 @@ class RestartTargetSeedTimeoutTests(unittest.TestCase):
         self.assertEqual(direct_calls, ['    ./scripts/seed-gateway-neighbor.sh || true'])
         self.assertGreaterEqual(self.source.count("seed_gateway_neighbors"), 5)
 
+    def test_recovery_phase_runs_host_watchdog_with_bash(self):
+        self.assertIn("recovery", self.source.split('case "$phase" in', 1)[1].split(";;", 1)[0])
+        self.assertIn('if phase == "recovery":', self.source)
+        self.assertIn('run_host_shell("admin-restart-recovery"', self.source)
+        self.assertIn("DUNE_WATCH_STARTUP_GRACE=0", self.source)
+        self.assertIn("bash /workspace/scripts/watch-maps.sh", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

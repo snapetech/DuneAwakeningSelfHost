@@ -17,8 +17,10 @@ measurements support a different layout.
 ```
 
 The generated `compose.cpu-affinity.yaml` is ignored by Git because CPU ids are
-specific to one machine. The generator obtains the active service list from the
-resolved Compose stack and uses Linux sysfs topology:
+specific to one machine. The generator obtains the service list from the
+resolved Compose stack with all Compose profiles enabled. This is required for
+profile-gated maps that may still be started explicitly. It then uses Linux
+sysfs topology:
 
 - on asymmetric cache systems such as X3D, the distinctly largest shared-L3
   domain is assigned to foreground maps;
@@ -46,7 +48,9 @@ Overrides are rejected if they are empty or reference an offline/unknown CPU.
 ```
 
 Preview compares every running Compose container's current CPU set with the
-generated target and changes nothing.
+generated target and changes nothing. It refuses to continue if a running
+project service has no generated target instead of silently leaving that service
+unpinned.
 
 Production activation must run on `kspls0` (or the installation's configured
 `DUNE_PRODUCTION_HOST`):

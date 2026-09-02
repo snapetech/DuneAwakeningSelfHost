@@ -66,6 +66,20 @@ A critical collision is rejected before announcements or job state are written.
 If any calendar authority fails, executing maintenance admission also fails
 closed; a partial horizon is never treated as proof that the proposed window is
 safe.
+
+The trusted daily maintenance scheduler marks its request as automatic daily
+maintenance. When the only critical collision is with one or more automatic
+backup windows, admission is allowed because both workers use the shared
+operation lock: the backup worker defers without taking a snapshot while the
+restart owns the lock. This exception does not apply to another disruptive
+operation, an event, or any other recovery authority.
+
+The daily scheduler also supplies a local-date idempotency key. The panel
+persists that key on the job and returns the existing active job when a retry
+repeats the same request, so a timeout or lost HTTP response cannot create a
+second morning restart or replace the first one. The host timer retries and
+reconciles the persisted job until the 06:00 window closes.
+
 Queued jobs may be superseded or cancelled. Once a job is `executing` or
 `awaiting_reboot`, its state is immutable to new schedule/cancel requests so its
 worker can finish recovery and seal the correct outcome.

@@ -1157,6 +1157,7 @@ services:
       - /var/tmp
     security_opt:
       - no-new-privileges:true
+    init: true
     pids_limit: 256
     depends_on:
       postgres:

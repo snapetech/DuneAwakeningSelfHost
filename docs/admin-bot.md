@@ -194,6 +194,22 @@ The private welcome path runs on every detected join for existing and new player
 Welcome! Please check {rules_url} for server rules.
 ```
 
+One-shot account-specific login notices use the same private Paul whisper path
+but are separate from native BRT recovery reminders. Configure the registry
+with `DUNE_PLAYER_PRESENCE_LOGIN_NOTICES_FILE` (default
+`backups/admin-bot/player-login-notices.json`) and manage it with:
+
+```bash
+./scripts/player-login-notice.py add --account-id 105 \
+  --message "Server notice: your former base was transferred because it was inactive. A backup of the prior server state is available on request; contact a server admin if you want to discuss recovery."
+./scripts/player-login-notice.py list
+./scripts/player-login-notice.py remove --account-id 105
+```
+
+The worker retries failed delivery and marks a notice delivered after the
+first successful whisper. A new notice revision can be queued by replacing
+the message or removing and re-adding the account record.
+
 The base-recovery reminder registry targets any number of accounts and uses the
 verified Paul whisper route. Each record sends one private reminder for each
 distinct `lastLoginTime` session while its native BRT backup is still staged.

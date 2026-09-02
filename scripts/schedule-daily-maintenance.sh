@@ -15,8 +15,11 @@ Environment:
   DUNE_DAILY_RESTART_SCHEDULE_WINDOW    Allowed local HH:MM-HH:MM invocation window. Default: 05:25-05:35
   DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW
                                         Set true to allow manual runs outside the window.
-  DUNE_DAILY_RESTART_DELAY              Warning window. Default: 30min
+  DUNE_DAILY_RESTART_TIME               Local maintenance start time. Default: 06:00
   DUNE_DAILY_RESTART_REPEAT_SECONDS     Repeat cadence. Default: 600
+  DUNE_DAILY_RESTART_RETRY_SECONDS      Seconds between schedule reconciliation attempts. Default: 60
+  DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS
+                                        Maximum reconciliation window. Default: 1500
   DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNECT
                                         Require targeted player disconnect before stop.
                                         Default: false
@@ -106,10 +109,30 @@ if [[ -z "$admin_port" ]]; then
   admin_port="$(read_env DUNE_ADMIN_HOST_PORT)"
 fi
 admin_port="${admin_port:-18080}"
-restart_delay="$(env_or_file DUNE_DAILY_RESTART_DELAY)"
-restart_delay="${restart_delay:-30min}"
+maintenance_time="$(env_or_file DUNE_DAILY_RESTART_TIME)"
+maintenance_time="${maintenance_time:-06:00}"
+time_to_minutes "$maintenance_time" >/dev/null
+now_epoch="$(date +%s)"
+target_epoch="$(date -d "today ${maintenance_time}" +%s)"
+if (( target_epoch <= now_epoch + 30 )); then
+  target_epoch="$(date -d "tomorrow ${maintenance_time}" +%s)"
+fi
+target_iso="$(date -u -d "@${target_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+daily_maintenance_key="$(date -d "@${target_epoch}" +%Y-%m-%d)"
 repeat_seconds="$(env_or_file DUNE_DAILY_RESTART_REPEAT_SECONDS)"
 repeat_seconds="${repeat_seconds:-600}"
+retry_seconds="$(env_or_file DUNE_DAILY_RESTART_RETRY_SECONDS)"
+retry_seconds="${retry_seconds:-60}"
+retry_window_seconds="$(env_or_file DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS)"
+retry_window_seconds="${retry_window_seconds:-1500}"
+if [[ ! "$retry_seconds" =~ ^[1-9][0-9]*$ || "$retry_seconds" -gt 600 ]]; then
+  printf 'invalid DUNE_DAILY_RESTART_RETRY_SECONDS: %s\n' "$retry_seconds" >&2
+  exit 2
+fi
+if [[ ! "$retry_window_seconds" =~ ^[1-9][0-9]*$ || "$retry_window_seconds" -gt 3600 ]]; then
+  printf 'invalid DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS: %s\n' "$retry_window_seconds" >&2
+  exit 2
+fi
 require_soft_disconnect="$(env_or_file DUNE_DAILY_RESTART_REQUIRE_SOFT_DISCONNECT)"
 require_soft_disconnect="${require_soft_disconnect:-false}"
 message="$(env_or_file DUNE_DAILY_RESTART_MESSAGE)"
@@ -149,6 +172,7 @@ auth_args=()
 if [[ -n "$token" ]]; then
   auth_args=(-H "Authorization: Bearer $token")
 fi
+restart_url="http://${admin_host}:${admin_port}/api/ops/restart"
 
 # Check before warning players, then let Admin revalidate immediately before
 # any disconnect or stop. An uncertified candidate never prevents the useful
@@ -183,16 +207,16 @@ else:
 fi
 
 body="$(
-  python3 - "$restart_delay" "$repeat_seconds" "$require_soft_disconnect" "$message" "$effective_update_policy" <<'PY'
+  python3 - "$target_iso" "$daily_maintenance_key" "$repeat_seconds" "$require_soft_disconnect" "$message" "$effective_update_policy" <<'PY'
 import json
 import sys
 
-delay, repeat_seconds, require_soft_disconnect, message, update_policy = sys.argv[1:6]
+run_at, daily_key, repeat_seconds, require_soft_disconnect, message, update_policy = sys.argv[1:7]
 require_soft_disconnect = require_soft_disconnect.strip().lower() in ("1", "true", "yes", "on")
 print(json.dumps({
     "target": "all",
     "action": "restart",
-    "delay": delay,
+    "runAt": run_at,
     "repeat_seconds": int(repeat_seconds),
     "announcement_cadence": [
         {"remaining_seconds": 5 * 60, "interval_seconds": 60},
@@ -204,20 +228,67 @@ print(json.dumps({
     "backup": True,
     "require_soft_disconnect": require_soft_disconnect,
     "update_policy": update_policy,
+    "automatic_daily_maintenance": True,
+    "daily_maintenance_key": daily_key,
 }))
 PY
 )"
 
-args=(-fsS -H "Content-Type: application/json" -X POST --data "$body" "${auth_args[@]}")
+job_matches_state() {
+  local state_json="$1"
+  python3 -c '
+import json, sys
+target = float(sys.argv[1])
+daily_key = sys.argv[2]
+tolerance = float(sys.argv[3])
+state = json.load(sys.stdin)
+for job in state.get("jobs", []):
+    if job.get("status") not in ("scheduled", "executing", "awaiting_reboot"):
+        continue
+    if job.get("action") != "restart" or job.get("target") != "all":
+        continue
+    if not job.get("execute") or not job.get("backup"):
+        continue
+    try:
+        run_at = float(job.get("runAt"))
+    except (TypeError, ValueError):
+        continue
+    if job.get("automaticDailyMaintenanceKey") == daily_key or abs(run_at - target) <= tolerance:
+        print(json.dumps({"id": job.get("id"), "status": job.get("status"), "runAt": run_at}))
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$target_epoch" "$daily_maintenance_key" "120" <<<"$state_json"
+}
 
-contract_request="$(python3 - "$body" <<'PY'
+verify_scheduled_job() {
+  local state_json
+  if ! state_json="$(curl --fail-with-body --silent --show-error --max-time 30 "${auth_args[@]}" "$restart_url" 2>/dev/null)"; then
+    return 1
+  fi
+  if job_summary="$(job_matches_state "$state_json" 2>/dev/null)"; then
+    printf 'daily maintenance job is persisted: %s\n' "$job_summary"
+    return 0
+  fi
+  return 1
+}
+
+schedule_once() {
+  local contract_request contract_response contract_required contract_token response
+  if verify_scheduled_job; then
+    return 0
+  fi
+
+  contract_request="$(python3 - "$body" <<'PY'
 import json
 import sys
 print(json.dumps({"targetPath": "/api/ops/restart", "requestBody": json.loads(sys.argv[1])}))
 PY
 )"
-contract_response="$(curl -fsS --max-time 30 -H "Content-Type: application/json" -X POST --data "$contract_request" "${auth_args[@]}" "http://${admin_host}:${admin_port}/api/security/change-contract")"
-read -r contract_required contract_token < <(python3 -c '
+  if ! contract_response="$(curl --fail-with-body --silent --show-error --max-time 60 -H "Content-Type: application/json" -X POST --data "$contract_request" "${auth_args[@]}" "http://${admin_host}:${admin_port}/api/security/change-contract" 2>&1)"; then
+    printf 'daily maintenance change-contract preflight failed: %s\n' "$contract_response" >&2
+    return 1
+  fi
+  read -r contract_required contract_token < <(python3 -c '
 import json, sys
 response=json.load(sys.stdin)
 required=bool(response.get("required") and (response.get("contract") or {}).get("governed"))
@@ -226,10 +297,44 @@ if required and not token:
     raise SystemExit("change contract is required but the preflight returned no token")
 print("true" if required else "false", token)
 ' <<<"$contract_response")
-if [[ "$contract_required" == "true" ]]; then
-  args+=(-H "X-DASH-Change-Contract: $contract_token")
+  args=(-fsS -H "Content-Type: application/json" -X POST --data "$body" "${auth_args[@]}")
+  if [[ "$contract_required" == "true" ]]; then
+    args+=(-H "X-DASH-Change-Contract: $contract_token")
+  fi
+  if ! response="$(curl --fail-with-body --silent --show-error --max-time 180 "${args[@]}" "$restart_url" 2>&1)"; then
+    printf 'daily maintenance schedule POST failed: %s\n' "$response" >&2
+  fi
+  if verify_scheduled_job; then
+    return 0
+  fi
+  return 1
+}
+
+retry_started="$(date +%s)"
+retry_deadline=$((retry_started + retry_window_seconds))
+target_deadline=$((target_epoch - 60))
+if (( target_deadline < retry_deadline )); then
+  retry_deadline="$target_deadline"
+fi
+if (( retry_deadline <= retry_started )); then
+  retry_deadline=$((retry_started + 60))
 fi
 
-curl "${args[@]}" "http://${admin_host}:${admin_port}/api/ops/restart"
-printf '\n'
-printf 'daily maintenance update policy: %s\n' "$effective_update_policy"
+while true; do
+  if schedule_once; then
+    printf '\n'
+    printf 'daily maintenance update policy: %s\n' "$effective_update_policy"
+    exit 0
+  fi
+  now_epoch="$(date +%s)"
+  if (( now_epoch >= retry_deadline )); then
+    printf 'daily maintenance job was not persisted before the retry deadline; no silent skip is allowed\n' >&2
+    exit 1
+  fi
+  sleep_for=$retry_seconds
+  remaining=$((retry_deadline - now_epoch))
+  if (( sleep_for > remaining )); then
+    sleep_for="$remaining"
+  fi
+  sleep "$sleep_for"
+done

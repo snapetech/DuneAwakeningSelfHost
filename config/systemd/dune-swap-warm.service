@@ -1,0 +1,19 @@
+[Unit]
+Description=Dune swap-warm idle memory daemon
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=keith
+Group=keith
+WorkingDirectory=/home/keith/Documents/code/DuneAwakeningSelfHost
+Environment=DUNE_SWAP_WARM_RETENTION_SECONDS=120
+Environment=DUNE_SWAP_WARM_HIGH_MIB=256
+Environment=DUNE_SWAP_WARM_POLL_SECONDS=10
+ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/swap-warm-daemon.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

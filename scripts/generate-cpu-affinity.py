@@ -135,7 +135,10 @@ def compose_services(env_file, services_file=None):
     command = [os.environ.get("CONTAINER_RUNTIME", "docker"), "compose", "--env-file", str(env_file)]
     for compose_file in resolved.split(":"):
         command.extend(["-f", compose_file])
-    command.extend(["config", "--services"])
+    # Include profile-gated services as well. A service such as the optional
+    # second Deep Desert can be started explicitly even when it is not part of
+    # Compose's default profile, so omitting profiles would leave it unpinned.
+    command.extend(["--profile", "*", "config", "--services"])
     output = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, check=True).stdout
     return [line.strip() for line in output.splitlines() if line.strip()]
 

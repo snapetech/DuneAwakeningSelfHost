@@ -13,6 +13,7 @@ import time
 
 from dune_whisper_route import whisper_route_for_fls_id
 import base_recovery_reminders
+import player_login_notices
 import vehicle_recovery_reminders
 
 
@@ -1501,6 +1502,65 @@ def vehicle_recovery_reminder(current, state):
     return results
 
 
+def configured_player_login_notices():
+    configured_path = env("DUNE_PLAYER_PRESENCE_LOGIN_NOTICES_FILE", "").strip()
+    path = player_login_notices.registry_path(configured_path or None)
+    return player_login_notices.list_notices(path)
+
+
+def player_login_notice(current, state):
+    """Whisper one queued notice on the first successful login delivery."""
+    results = []
+    try:
+        notices = configured_player_login_notices()
+    except Exception as exc:
+        return [{"event": "player-login-notice", "ok": False, "error": str(exc)}]
+    runtime = state.setdefault("playerLoginNotices", {})
+    now = now_ts()
+    for config in notices:
+        account_id = str(config["accountId"])
+        entry = runtime.setdefault(account_id, {})
+        fingerprint = player_login_notices.config_fingerprint(config)
+        if entry.get("configFingerprint") != fingerprint:
+            entry.clear()
+            entry["configFingerprint"] = fingerprint
+        if not config.get("enabled", True) or entry.get("deliveredAt"):
+            entry["active"] = False
+            continue
+
+        entry["active"] = True
+        player = current.get(account_id)
+        if not player:
+            continue
+        session = player_presence_session(player) or f"online:{player_fls_id(player) or account_id}"
+        if (
+            entry.get("lastAttemptSession") == session
+            and now - int(entry.get("lastAttemptEpoch") or 0) < 60
+        ):
+            continue
+
+        session_key = hashlib.sha256(f"{session}|{fingerprint}".encode("utf-8")).hexdigest()[:16]
+        job_id = f"player-presence-login-notice-{account_id}-{session_key}"
+        send = private_message(player, config["message"], job_id)
+        entry["lastAttemptAt"] = now_iso()
+        entry["lastAttemptEpoch"] = now
+        entry["lastAttemptSession"] = session
+        result = {
+            "event": "player-login-notice",
+            "accountId": account_id,
+            "player": player_name(player),
+            "session": session,
+            "message": config["message"],
+            "send": send,
+        }
+        results.append(result)
+        if send.get("ok"):
+            entry["active"] = False
+            entry["deliveredAt"] = now_iso()
+            entry["deliveredSession"] = session
+    return results
+
+
 def private_join_message(player, message):
     return private_message(player, message, "player-presence-private-welcome")
 
@@ -1612,6 +1672,7 @@ def send_admin_digest(current, state, template, count, event, extra=None):
 def check_once():
     state = load_state()
     current = online_players()
+    player_login_notice_results = player_login_notice(current, state)
     base_recovery_reminder_results = base_recovery_reminder(current, state)
     vehicle_recovery_reminder_results = vehicle_recovery_reminder(current, state)
     previous = state.get("onlinePlayers")
@@ -2285,6 +2346,7 @@ def check_once():
         "automatedPrivateMessages": automated_private_results,
         "baseRecoveryReminderMessages": base_recovery_reminder_results,
         "vehicleRecoveryReminderMessages": vehicle_recovery_reminder_results,
+        "playerLoginNoticeMessages": player_login_notice_results,
         "starterBaseToolGrants": starter_grant_results,
         "starterBaseToolMessages": starter_message_results,
         "starterEmoteGrants": starter_emote_grant_results,

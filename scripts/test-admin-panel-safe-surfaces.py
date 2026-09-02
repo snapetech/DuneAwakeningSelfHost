@@ -2747,6 +2747,40 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         self.assertEqual(recoveries, ["recover"])
         self.assertEqual(result["recovery"]["output"], "recovered")
 
+    def test_restart_recovery_uses_host_helper_when_admin_image_has_no_bash(self):
+        recovery = self.workspace / "scripts" / "watch-maps.sh"
+        recovery.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        recovery.chmod(0o755)
+        launcher = self.workspace / "scripts" / "restart-target.sh"
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        launcher.chmod(0o755)
+        self.panel.RESTART_RECOVERY_COMMAND = str(recovery)
+        self.panel.RESTART_COMMAND = str(launcher)
+        self.panel.RESTART_ONLINE_TIMEOUT_SECONDS = 7
+        self.panel.RESTART_RECOVERY_TIMEOUT_SECONDS = 11
+        original_which = self.panel.shutil.which
+        original_run = self.panel.subprocess.run
+        calls = []
+        self.panel.shutil.which = lambda name: None if name == "bash" else original_which(name)
+        self.panel.subprocess.run = lambda argv, **kwargs: calls.append((argv, kwargs)) or types.SimpleNamespace(
+            returncode=0, stdout="host helper", stderr=""
+        )
+        self.addCleanup(lambda: setattr(self.panel.shutil, "which", original_which))
+        self.addCleanup(lambda: setattr(self.panel.subprocess, "run", original_run))
+
+        result = self.panel.run_restart_recovery({
+            "id": "recover-host-helper",
+            "target": "all",
+            "services": ["survival", "overmap"],
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["mode"], "host-helper")
+        self.assertEqual(calls[-1][0], [str(launcher), "all"])
+        self.assertEqual(calls[-1][1]["env"]["DUNE_RESTART_PHASE"], "recovery")
+        self.assertEqual(calls[-1][1]["env"]["DUNE_WATCH_RECOVERY_WAIT"], "7")
+        self.assertEqual(calls[-1][1]["env"]["DUNE_WATCH_RECOVER_TIMEOUT"], "11")
+
     def test_artificial_exchange_install_actions_use_explicit_unit_paths(self):
         captured = []
         original = self.panel.run_workspace_command
@@ -4762,6 +4796,51 @@ class AdminPanelSafeSurfacesTest(unittest.TestCase):
         ))
         self.assertTrue(job["calendarConflictOverride"])
         self.assertEqual(1, len(job["calendarConflicts"]))
+
+    def test_daily_restart_allows_only_automatic_backup_calendar_overlap(self):
+        self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        now = self.panel.time.time()
+        state = self.panel.default_backup_schedule()
+        state.update({"enabled": True, "nextRun": now + 600, "intervalHours": 24})
+        self.panel.write_backup_schedule(state)
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+
+        job = self.panel.schedule_restart({
+            "target": "all", "action": "restart", "execute": True,
+            "announce": False, "automatic_daily_maintenance": True,
+            "runAt": self.panel.operations_calendar.iso(now + 650),
+        })
+
+        self.assertTrue(job["calendarConflictAutoOverride"])
+        self.assertFalse(job["calendarConflictOverride"])
+        self.assertEqual(1, len(job["calendarConflicts"]))
+
+    def test_daily_restart_key_is_idempotent_and_preserves_the_first_job(self):
+        self.panel.RESTART_STATE_FILE = self.workspace / "backups" / "admin-panel" / "restart-jobs.json"
+        self.panel.EVENT_STATE_FILE = self.workspace / "backups" / "admin-panel" / "events.json"
+        original_slo = self.panel.operational_slo_public_status
+        self.panel.operational_slo_public_status = lambda: {"maintenanceWindows": []}
+        self.addCleanup(lambda: setattr(self.panel, "operational_slo_public_status", original_slo))
+        run_at = self.panel.operations_calendar.iso(self.panel.time.time() + 3600)
+        body = {
+            "target": "all", "action": "restart", "execute": True,
+            "announce": False, "automatic_daily_maintenance": True,
+            "daily_maintenance_key": "2026-08-02",
+            "runAt": run_at,
+        }
+
+        first = self.panel.schedule_restart(body)
+        second = self.panel.schedule_restart(dict(body, message="retry after lost response"))
+
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(first["automaticDailyMaintenance"])
+        self.assertEqual("2026-08-02", first["automaticDailyMaintenanceKey"])
+        state = self.panel.read_restart_state()
+        self.assertEqual(1, len([job for job in state["jobs"] if job.get("status") == "scheduled"]))
 
     def test_restart_schedule_retains_warning_findings_without_blocking(self):
         self.panel.BACKUP_SCHEDULE_FILE = self.workspace / "backups" / "admin-panel" / "backup-schedule.json"

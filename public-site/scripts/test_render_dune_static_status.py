@@ -56,6 +56,7 @@ class StaticStatusRenderTest(unittest.TestCase):
                 textwrap.dedent(
                     """\
                     #!/usr/bin/env python3
+                    import datetime
                     import json
                     import sys
                     if sys.argv[1] == "ps":
@@ -63,7 +64,7 @@ class StaticStatusRenderTest(unittest.TestCase):
                             print(f"id-{service}\\t{service}")
                     elif sys.argv[1] == "inspect":
                         print(json.dumps([{
-                            "State": {"Status": "running", "StartedAt": "2026-06-22T16:00:00Z"},
+                            "State": {"Status": "running", "StartedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()},
                             "RestartCount": 0,
                         }]))
                     else:
@@ -295,9 +296,104 @@ class StaticStatusRenderTest(unittest.TestCase):
             }]
         })
 
-        self.assertIn("Since maintenance", html)
+        self.assertIn("Maintenance failed", html)
+        self.assertNotIn("Since maintenance", html)
+        self.assertIn("<strong>Last maintenance attempt</strong>", html)
         self.assertIn("<strong>Status</strong> failed", html)
         self.assertIn("<strong>Backup</strong> requested", html)
+
+    def test_failed_readiness_timeout_is_cleared_after_farm_recovers(self):
+        html = self.render_status(
+            {
+                "jobs": [{
+                    "id": "daily",
+                    "status": "failed",
+                    "action": "restart",
+                    "execute": True,
+                    "target": "all",
+                    "targetLabel": "All services",
+                    "backup": True,
+                    "executedAt": time.time() - 60,
+                }]
+            },
+            status_lines=(
+                "current_ready_alive=31 current_alive_active=31 active_servers=31 partitions=31 "
+                "game_sg_connections=31 admin_sg_connections=4\n"
+                "core_ready_alive=2 core_alive_active=2 core_active_servers=2 core_partitions=2\n"
+                "FLS publication health: healthy\n"
+            ),
+        )
+
+        self.assertIn("Since maintenance", html)
+        self.assertNotIn("Maintenance failed", html)
+        self.assertIn("recovered after readiness timeout", html)
+        self.assertIn("Farm reached ready/active after the maintenance readiness timeout.", html)
+
+    def test_upcoming_maintenance_is_visible_before_stale_failure(self):
+        html = self.render_status({
+            "jobs": [
+                {
+                    "id": "failed-daily",
+                    "status": "failed",
+                    "action": "restart",
+                    "execute": True,
+                    "target": "all",
+                    "targetLabel": "All services",
+                    "backup": True,
+                    "executedAt": time.time() - (48 * 3600),
+                },
+                {
+                    "id": "next-daily",
+                    "status": "scheduled",
+                    "action": "restart",
+                    "execute": True,
+                    "target": "all",
+                    "targetLabel": "All services",
+                    "backup": True,
+                    "runAt": time.time() + 3600,
+                },
+            ]
+        })
+
+        self.assertIn("Maintenance scheduled", html)
+        self.assertIn("<strong>Next maintenance</strong>", html)
+        self.assertIn("<strong>Backup</strong> requested before restart", html)
+        self.assertIn("<strong>Last maintenance attempt</strong>", html)
+        self.assertIn("<strong>Last result</strong> failed", html)
+        self.assertNotIn("<strong>Schedule</strong> stale", html)
+
+    def test_overdue_maintenance_is_visible_instead_of_old_failure(self):
+        html = self.render_status({
+            "jobs": [
+                {
+                    "id": "failed-daily",
+                    "status": "failed",
+                    "action": "restart",
+                    "execute": True,
+                    "target": "all",
+                    "targetLabel": "All services",
+                    "backup": True,
+                    "executedAt": time.time() - (48 * 3600),
+                },
+                {
+                    "id": "stuck-daily",
+                    "status": "scheduled",
+                    "action": "restart",
+                    "execute": True,
+                    "target": "all",
+                    "targetLabel": "All services",
+                    "backup": True,
+                    "runAt": time.time() - 3600,
+                },
+            ]
+        })
+
+        self.assertIn("Maintenance overdue", html)
+        self.assertIn("overdue by", html)
+        self.assertIn("<strong>Scheduled maintenance</strong>", html)
+        self.assertIn("<strong>Status</strong> scheduled", html)
+        self.assertNotIn("Maintenance failed", html)
+        self.assertIn("<strong>Last maintenance attempt</strong>", html)
 
     def test_stale_maintenance_marks_schedule_stale(self):
         executed_at = time.time() - (48 * 3600)

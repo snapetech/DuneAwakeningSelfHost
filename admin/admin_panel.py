@@ -1610,13 +1610,14 @@ def start_admin_panel_self_reload(server):
 
     threading.Thread(target=watcher, name="admin-panel-self-reload", daemon=True).start()
 ANNOUNCEMENT_THREAD_STARTED = False
+ANNOUNCEMENT_THREAD = None
 ANNOUNCEMENT_POLL_SECONDS = 5
 ANNOUNCEMENT_MAX_MESSAGE_BYTES = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_MAX_MESSAGE_BYTES", "500"))
 ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_ANNOUNCEMENT_COMMAND_TIMEOUT_SECONDS", "45"))
 ANNOUNCEMENT_COMMAND = os.environ.get("DUNE_ADMIN_ANNOUNCE_COMMAND", str(ROOT / "scripts" / "announce.sh"))
 RESTART_COMMAND_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_COMMAND_TIMEOUT_SECONDS", "1800"))
 RESTART_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_COMMAND", str(ROOT / "scripts" / "restart-target.sh"))
-RESTART_ONLINE_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_TIMEOUT_SECONDS", "300"))
+RESTART_ONLINE_TIMEOUT_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_TIMEOUT_SECONDS", "900"))
 RESTART_ONLINE_POLL_SECONDS = int(os.environ.get("DUNE_ADMIN_RESTART_ONLINE_POLL_SECONDS", "5"))
 RESTART_RECOVERY_ENABLED = os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 RESTART_RECOVERY_COMMAND = os.environ.get("DUNE_ADMIN_RESTART_RECOVERY_COMMAND", str(ROOT / "scripts" / "watch-maps.sh"))
@@ -2413,7 +2414,7 @@ ENV_KEY_DEFINITIONS.update({
     "DUNE_ARTIFICIAL_EXCHANGE_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Master gate for the artificial buyer service."},
     "DUNE_ARTIFICIAL_EXCHANGE_DRY_RUN": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "When true, buyer scans select listings but do not purchase."},
     "DUNE_ARTIFICIAL_EXCHANGE_PURCHASES_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows native Exchange purchases when the buyer is not in dry-run mode."},
-    "DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows seller settlement auto-claim through the validated native retrieval path."},
+    "DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows seller settlement auto-claim through the validated bank-credit path."},
     "DUNE_ARTIFICIAL_EXCHANGE_AUTO_CLAIM_AFTER_SCAN": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Runs auto-claim after each buyer scan when auto-claim is enabled."},
     "DUNE_ARTIFICIAL_EXCHANGE_FUNDING_ENABLED": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Allows explicit buyer Solari funding actions."},
     "DUNE_ARTIFICIAL_EXCHANGE_ID": {"group": "Artificial Exchange", "secret": False, "restart": True, "why": "Exchange id used for listing discovery and seeding. Default is 2."},
@@ -2921,6 +2922,25 @@ def schedule_restart(body):
     if update_policy == "automatic" and UPDATE_READINESS_REQUIRE_RECEIPT:
         raise ValueError("automatic restart updates require DUNE_UPDATE_REQUIRE_READINESS_RECEIPT=false")
     now = time.time()
+    automatic_daily_maintenance = str(
+        body.get("automatic_daily_maintenance", body.get("automaticDailyMaintenance", "false"))
+    ).lower() in ("1", "true", "yes", "on")
+    automatic_daily_maintenance_key = str(
+        body.get("daily_maintenance_key", body.get("dailyMaintenanceKey", ""))
+    ).strip()[:128] if automatic_daily_maintenance else ""
+    if automatic_daily_maintenance_key:
+        with RESTART_LOCK:
+            state = read_restart_state()
+            existing = next(
+                (
+                    existing for existing in state.get("jobs", [])
+                    if existing.get("status") in ("scheduled", "executing", "awaiting_reboot")
+                    and existing.get("automaticDailyMaintenanceKey") == automatic_daily_maintenance_key
+                ),
+                None,
+            )
+        if existing:
+            return existing
     if requested_run_at not in (None, ""):
         run_at = event_parse_time(requested_run_at).timestamp()
         if run_at < now + 30:
@@ -2938,10 +2958,19 @@ def schedule_restart(body):
     calendar_conflicts = calendar_admission["conflicts"]
     blocking_conflicts = calendar_admission["criticalConflicts"]
     conflict_override = str(body.get("allowCalendarConflict", body.get("allow_calendar_conflict", "false"))).lower() in ("1", "true", "yes", "on")
+    automatic_backup_conflict = bool(blocking_conflicts) and automatic_daily_maintenance and all(
+        "restart-candidate" in {str(row.get("leftId") or ""), str(row.get("rightId") or "")}
+        and any(
+            str(conflict_id).startswith("backup-schedule")
+            for conflict_id in (row.get("leftId"), row.get("rightId"))
+            if str(conflict_id or "") != "restart-candidate"
+        )
+        for row in blocking_conflicts
+    )
     if blocking_conflicts and conflict_override:
         if str(body.get("calendarConflictConfirm", body.get("calendar_conflict_confirm", ""))) != CONFIRM_CALENDAR_CONFLICT_OVERRIDE:
             raise ValueError(f"calendar conflict override requires exact confirmation: {CONFIRM_CALENDAR_CONFLICT_OVERRIDE}")
-    elif blocking_conflicts:
+    elif blocking_conflicts and not automatic_backup_conflict:
         summary = "; ".join(str(row.get("reason") or "calendar conflict") for row in blocking_conflicts[:3])
         raise ValueError(
             f"executing maintenance conflicts with the operations calendar: {summary}; "
@@ -2967,12 +2996,26 @@ def schedule_restart(body):
         "principalId": str(body.get("principal_id", body.get("principalId", "system")) or "system")[:128],
         "status": "scheduled",
         "lastError": None,
+        "automaticDailyMaintenance": automatic_daily_maintenance,
+        "automaticDailyMaintenanceKey": automatic_daily_maintenance_key or None,
         "calendarConflicts": calendar_conflicts,
         "calendarCoverageFindings": calendar_admission["coverageFindings"],
         "calendarConflictOverride": bool(blocking_conflicts and conflict_override),
+        "calendarConflictAutoOverride": automatic_backup_conflict,
     }
     with RESTART_LOCK:
         state = read_restart_state()
+        if automatic_daily_maintenance_key:
+            existing = next(
+                (
+                    existing for existing in state.get("jobs", [])
+                    if existing.get("status") in ("scheduled", "executing", "awaiting_reboot")
+                    and existing.get("automaticDailyMaintenanceKey") == automatic_daily_maintenance_key
+                ),
+                None,
+            )
+            if existing:
+                return existing
         in_flight = [
             existing for existing in state.get("jobs", [])
             if existing.get("status") in ("executing", "awaiting_reboot")
@@ -3184,11 +3227,36 @@ def run_restart_recovery(job):
     env.update({
         "COMPOSE_FILES": resolve_compose_files("compose.yaml:compose.allmaps.yaml"),
         "DUNE_WATCH_STARTUP_GRACE": "0",
-        "DUNE_WATCH_RECOVERY_WAIT": env.get("DUNE_WATCH_RECOVERY_WAIT", str(RESTART_ONLINE_TIMEOUT_SECONDS)),
+        "DUNE_WATCH_RECOVERY_WAIT": str(RESTART_ONLINE_TIMEOUT_SECONDS),
+        "DUNE_WATCH_RECOVER_TIMEOUT": str(RESTART_RECOVERY_TIMEOUT_SECONDS),
     })
+    command_args = [str(command), str(ENV_FILE), "--once"]
+    recovery_mode = "direct"
+    try:
+        command_requires_bash = command.suffix == ".sh" and "bash" in command.read_text(encoding="utf-8", errors="ignore").split("\n", 1)[0].lower()
+    except OSError:
+        command_requires_bash = command.suffix == ".sh"
+    if command_requires_bash and shutil.which("bash") is None:
+        recovery_launcher = pathlib.Path(RESTART_COMMAND)
+        if not recovery_launcher.exists() or not os.access(recovery_launcher, os.X_OK):
+            return {
+                "ok": False,
+                "error": "restart recovery requires bash, and the host recovery launcher is unavailable",
+                "durationMs": int(round((time.monotonic() - started) * 1000)),
+            }
+        command_args = [str(recovery_launcher), str(job.get("target") or "all")]
+        env.update({
+            "ENV_FILE": str(ENV_FILE),
+            "DUNE_RESTART_TARGET": str(job.get("target") or "all"),
+            "DUNE_RESTART_SERVICES": " ".join(job.get("services", [])),
+            "DUNE_RESTART_ACTION": "restart",
+            "DUNE_RESTART_PHASE": "recovery",
+            "DUNE_RESTART_CHECK_STEAM_UPDATE": "false",
+        })
+        recovery_mode = "host-helper"
     try:
         result = subprocess.run(
-            [str(command), str(ENV_FILE), "--once"],
+            command_args,
             cwd=str(ROOT),
             env=env,
             text=True,
@@ -3198,13 +3266,13 @@ def run_restart_recovery(job):
             check=False,
         )
     except Exception as exc:
-        return {"ok": False, "error": str(exc), "durationMs": int(round((time.monotonic() - started) * 1000))}
+        return {"ok": False, "error": str(exc), "durationMs": int(round((time.monotonic() - started) * 1000)), "mode": recovery_mode}
     output = (result.stdout + result.stderr).strip()
     if len(output) > AUDIT_FIELD_LIMIT:
         output = output[:AUDIT_FIELD_LIMIT] + "...[truncated]"
     return {
         "ok": result.returncode == 0, "returncode": result.returncode, "output": output,
-        "durationMs": int(round((time.monotonic() - started) * 1000)),
+        "durationMs": int(round((time.monotonic() - started) * 1000)), "mode": recovery_mode,
     }
 
 
@@ -3641,12 +3709,28 @@ def announcement_worker():
         time.sleep(ANNOUNCEMENT_POLL_SECONDS)
 
 
+def announcement_worker_supervisor():
+    """Keep the maintenance executor alive after a transient worker failure."""
+    global ANNOUNCEMENT_THREAD
+    while True:
+        thread = ANNOUNCEMENT_THREAD
+        if thread is None or not thread.is_alive():
+            candidate = threading.Thread(target=announcement_worker, name="announcement-worker", daemon=True)
+            try:
+                candidate.start()
+            except Exception as exc:
+                print(f"announcement worker start failed; retrying: {exc}", flush=True)
+            else:
+                ANNOUNCEMENT_THREAD = candidate
+        time.sleep(ANNOUNCEMENT_POLL_SECONDS)
+
+
 def ensure_announcement_thread():
     global ANNOUNCEMENT_THREAD_STARTED
     if ANNOUNCEMENT_THREAD_STARTED:
         return
     ANNOUNCEMENT_THREAD_STARTED = True
-    thread = threading.Thread(target=announcement_worker, name="announcement-worker", daemon=True)
+    thread = threading.Thread(target=announcement_worker_supervisor, name="announcement-supervisor", daemon=True)
     thread.start()
 
 
@@ -10049,7 +10133,9 @@ def ensure_change_intelligence():
     try:
         change_intelligence_store()
         catchup = change_intelligence_import_history()
-        change_intelligence_reconcile_incidents()
+        # Full incident reconciliation verifies the retained HMAC ledger and
+        # can be expensive on a large history. It must not delay the admin
+        # socket or strand the maintenance executor during container startup.
         last_error = "" if catchup.get("ok") else f"audit history catch-up completed with {catchup.get('errors', 0)} error(s)"
         CHANGE_INTELLIGENCE_RUNTIME.update({"ready": True, "lastError": last_error})
     except Exception as exc:
@@ -14877,6 +14963,8 @@ class Handler(BaseHTTPRequestHandler):
                     calendar_conflicts=len(result.get("calendarConflicts") or []),
                     calendar_coverage_findings=len(result.get("calendarCoverageFindings") or []),
                     calendar_conflict_override=bool(result.get("calendarConflictOverride")),
+                    calendar_conflict_auto_override=bool(result.get("calendarConflictAutoOverride")),
+                    daily_maintenance_key=result.get("automaticDailyMaintenanceKey"),
                 )
                 self.json({"ok": True, "job": result})
             elif parsed.path == "/api/ops/restart/cancel":
@@ -24601,13 +24689,16 @@ load();
 
 
 def main():
-    # Complete startup catch-up before binding the admin socket. The audit
-    # chain is verified once after that work so the first privileged request
-    # does not pay the full retained-ledger scan; subsequent requests reuse
-    # the verified artifact cache for its bounded lifetime.
-    ensure_change_intelligence()
+    # Do not make the maintenance executor wait for retained evidence import.
+    # The change-intelligence store is initialized lazily by its worker and
+    # the first request; history catch-up runs after the socket is available.
+    threading.Thread(
+        target=ensure_change_intelligence,
+        name="change-intelligence-startup",
+        daemon=True,
+    ).start()
     if AUDIT_LEDGER_ENABLED:
-        audit_ledger_public_status(force=True)
+        audit_ledger_public_status(force=False)
     ensure_announcement_thread()
     ensure_care_package_auto_thread()
     ensure_memory_balancer_thread()
@@ -24632,7 +24723,10 @@ def main():
     finally:
         server.server_close()
     if ADMIN_PANEL_RESTART_EVENT.is_set():
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        # Let the container supervisor restart the process. In-process exec
+        # preserves child-process state and can strand completed subprocesses
+        # as zombies, eventually exhausting the admin container's PID limit.
+        raise SystemExit(75)
 
 
 if __name__ == "__main__":

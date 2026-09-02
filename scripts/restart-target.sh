@@ -19,7 +19,7 @@ case "$action" in
     ;;
 esac
 case "$phase" in
-  restart|shutdown|stop|update|start|reboot) ;;
+  restart|shutdown|stop|update|start|reboot|recovery) ;;
   *)
     printf 'invalid DUNE_RESTART_PHASE: %s\n' "$phase" >&2
     exit 64
@@ -646,8 +646,36 @@ def run_host_compose(services):
     if not fast_dynamic_start:
         compose_command.append("--force-recreate")
     compose_command.append("--no-deps")
-    compose_command.extend(services)
     service_words = " ".join(services)
+
+    # A "restart all" fleet recreate previously issued one docker compose up
+    # with every configured map service at once. Compose then created/started
+    # them essentially simultaneously, and production evidence (Capacity
+    # Intelligence recentStarts) showed the resulting thundering herd routinely
+    # took 5-13 minutes per map and repeatedly hit the 300s start timeout,
+    # instead of the ~90-260s a single guarded start takes. Batch it instead.
+    restart_all_batch_size = 0
+    if target == "all":
+        restart_all_batch_size = int(env_value("DUNE_RESTART_ALL_BATCH_SIZE") or "6")
+    restart_all_batch_pause = int(env_value("DUNE_RESTART_ALL_BATCH_PAUSE_SECONDS") or "60")
+    if restart_all_batch_size > 0 and len(services) > restart_all_batch_size:
+        batches = [services[i:i + restart_all_batch_size] for i in range(0, len(services), restart_all_batch_size)]
+    else:
+        batches = [services]
+    compose_invocations = []
+    for batch_index, batch in enumerate(batches):
+        batch_command = compose_command + list(batch)
+        compose_invocations.append(" ".join(shlex.quote(part) for part in batch_command))
+        if batch_index < len(batches) - 1:
+            compose_invocations.append(
+                "echo "
+                + shlex.quote(
+                    f"restart-target: batch {batch_index + 1}/{len(batches)} started"
+                    f" ({len(batch)} services), pausing {restart_all_batch_pause}s before next batch"
+                )
+                + f"; sleep {restart_all_batch_pause}"
+            )
+    compose_command_shell = "; ".join(compose_invocations)
     landsraad_term_length_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_TERM_LENGTH_TUNING_ENABLED") or ""
     landsraad_term_alignment_guard_enabled = os.environ.get("DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_TERM_CORIOLIS_ALIGNMENT_GUARD_ENABLED") or "true"
     landsraad_goal_tuning_enabled = os.environ.get("DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or read_env_value(env_file, "DUNE_LANDSRAAD_GOAL_TUNING_ENABLED") or ""
@@ -697,7 +725,7 @@ def run_host_compose(services):
             "if [ -x /workspace/scripts/validate-landsraad-coriolis-cycle.sh ]; then "
             f"/workspace/scripts/validate-landsraad-coriolis-cycle.sh {shlex.quote(env_file)}; "
             "fi; "
-            + " ".join(shlex.quote(part) for part in compose_command)
+            + compose_command_shell
             + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
             "/workspace/scripts/seed-gateway-neighbor.sh || true; "
             "fi; "
@@ -747,7 +775,7 @@ def run_host_compose(services):
         + f"/workspace/scripts/full-world-partitions.sh {shlex.quote(env_file)}; "
         + "fi; "
         + ensure_official_images_shell
-        + " ".join(shlex.quote(part) for part in compose_command)
+        + compose_command_shell
         + "; if [ -x /workspace/scripts/seed-gateway-neighbor.sh ]; then "
         + "/workspace/scripts/seed-gateway-neighbor.sh; "
         + "fi; "
@@ -1136,6 +1164,33 @@ if phase == "reboot":
         + shlex.quote(" ".join(services))
     )
     result = run_host_shell("admin-update-reboot", request_command)
+    print(json.dumps({"ok": bool(result.get("ok")), "target": target, "action": action, "phase": phase, "result": result}, separators=(",", ":")))
+    sys.exit(0 if result.get("ok") else int(result.get("returncode", 1)))
+
+
+if phase == "recovery":
+    if dry_run:
+        print(json.dumps({"ok": True, "target": target, "action": action, "phase": phase, "dryRun": True}, separators=(",", ":")))
+        sys.exit(0)
+    recovery_wait = os.environ.get("DUNE_WATCH_RECOVERY_WAIT", "300")
+    recovery_timeout = os.environ.get("DUNE_WATCH_RECOVER_TIMEOUT", "900")
+    recovery_command = (
+        "set -e; "
+        "if [ ! -x /workspace/scripts/watch-maps.sh ]; then "
+        "echo 'watch-maps recovery script is missing' >&2; exit 1; fi; "
+        "if [ -x /workspace/scripts/map-watchdog-control.sh ]; then "
+        f"/workspace/scripts/map-watchdog-control.sh pause {shlex.quote(env_file)} || true; "
+        "fi; "
+        "cleanup() { "
+        "if [ -x /workspace/scripts/map-watchdog-control.sh ]; then "
+        f"/workspace/scripts/map-watchdog-control.sh resume {shlex.quote(env_file)} || true; "
+        "fi; "
+        "}; trap cleanup EXIT; "
+        f"DUNE_WATCH_STARTUP_GRACE=0 DUNE_WATCH_RECOVERY_WAIT={shlex.quote(recovery_wait)} "
+        f"DUNE_WATCH_RECOVER_TIMEOUT={shlex.quote(recovery_timeout)} "
+        f"bash /workspace/scripts/watch-maps.sh {shlex.quote(env_file)} --once"
+    )
+    result = run_host_shell("admin-restart-recovery", recovery_command)
     print(json.dumps({"ok": bool(result.get("ok")), "target": target, "action": action, "phase": phase, "result": result}, separators=(",", ":")))
     sys.exit(0 if result.get("ok") else int(result.get("returncode", 1)))
 

@@ -69,15 +69,28 @@ if ((${#CONTAINERS[@]} == 0)); then
 fi
 
 rows=()
+missing_services=()
 for container in "${CONTAINERS[@]}"; do
   [[ -n "$container" ]] || continue
   service="$("$CONTAINER_RUNTIME" inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$container")"
   name="$("$CONTAINER_RUNTIME" inspect -f '{{.Name}}' "$container" | sed 's#^/##')"
   current="$("$CONTAINER_RUNTIME" inspect -f '{{.HostConfig.CpusetCpus}}' "$container")"
   target="${TARGETS[$service]:-}"
-  [[ -n "$target" ]] || continue
+  if [[ -z "$target" ]]; then
+    missing_services+=("$name|$service")
+    continue
+  fi
   rows+=("$container|$name|$service|$current|$target")
 done
+
+if ((${#missing_services[@]})); then
+  echo "Running Compose services are missing from $OVERLAY; refusing to continue:" >&2
+  for row in "${missing_services[@]}"; do
+    IFS='|' read -r name service <<<"$row"
+    printf '  %s service=%s\n' "$name" "$service" >&2
+  done
+  exit 1
+fi
 
 printf 'container\tservice\tcurrent\ttarget\taction\n'
 for row in "${rows[@]}"; do

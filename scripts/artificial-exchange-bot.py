@@ -2093,147 +2093,88 @@ def read_exchange_balance(conn, owner_id):
     return int(row["balance"]) if row and row.get("balance") is not None else 0
 
 
-def credit_solaris_inventory(cur, controller_id, amount):
-    """Credit carried SolarisCoin inventory, matching the player-visible path."""
+def credit_solaris_bank(cur, controller_id, amount, owner_id=None):
+    """Credit the player's visible bank balance, never carried inventory."""
+    controller_id = int(controller_id)
+    owner_id = controller_id if owner_id is None else int(owner_id)
     amount = int(amount)
     if amount <= 0:
-        raise ValueError("inventory Solari credit must be positive")
+        raise ValueError("bank Solari credit must be positive")
+
+    # The row may not exist for a newly-created player. Create a zero row first,
+    # then lock it so the credit and its verification are serialized.
     cur.execute(
         """
-        select player_controller_id, player_pawn_id
-        from dune.player_state
-        where player_controller_id=%s
+        insert into dune.player_virtual_currency_balances(player_controller_id, currency_id, balance)
+        values(%s, dune.get_solaris_id(), 0)
+        on conflict (player_controller_id, currency_id) do nothing
+        """,
+        (controller_id,),
+    )
+    cur.execute(
+        """
+        select balance
+        from dune.player_virtual_currency_balances
+        where player_controller_id=%s and currency_id=dune.get_solaris_id()
         for update
         """,
         (controller_id,),
     )
-    player = cur.fetchone()
-    if not player:
-        raise RuntimeError(f"seller controller {controller_id} has no player_state")
-    cur.execute(
-        """
-        select inv.id, inv.actor_id, inv.max_item_count, inv.max_item_volume
-        from dune.inventories inv
-        where inv.actor_id in (%s, %s)
-          and (inv.inventory_type = 0 or inv.inventory_type is null)
-        order by
-          case when inv.actor_id=%s then 0 else 1 end,
-          case when inv.inventory_type=0 then 0 else 1 end,
-          inv.id
-        limit 1
-        for update
-        """,
-        (player["player_pawn_id"], player["player_controller_id"], player["player_pawn_id"]),
-    )
-    inventory = cur.fetchone()
-    if not inventory:
-        raise RuntimeError(f"seller controller {controller_id} has no carried inventory")
-    inventory_id = int(inventory["id"])
-    cur.execute(
-        """
-        select id, inventory_id, stack_size, position_index, template_id,
-               is_new, acquisition_time, stats, quality_level, volume_override
-        from dune.items
-        where inventory_id=%s and template_id='SolarisCoin'
-        order by id
-        limit 1
-        for update
-        """,
-        (inventory_id,),
-    )
-    existing = cur.fetchone()
-    if existing:
-        item_id = int(existing["id"])
-        before_stack = int(existing["stack_size"])
-        after_stack = before_stack + amount
-        cur.execute(
-            """
-            select dune.save_item((
-                %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s
-            )::dune.inventoryitem)
-            """,
-            (
-                item_id,
-                inventory_id,
-                after_stack,
-                existing["position_index"],
-                existing["template_id"],
-                existing["is_new"],
-                existing["acquisition_time"],
-                json.dumps(existing["stats"] or {}),
-                existing["quality_level"],
-                existing["volume_override"],
-            ),
-        )
-        cur.execute(
-            "select * from dune.load_item(%s)",
-            (item_id,),
-        )
-        saved = cur.fetchone()
-        if not saved or int(saved["stack_size"]) != after_stack or saved["template_id"] != "SolarisCoin":
-            raise RuntimeError("SolarisCoin inventory stack verification failed")
-        return {
-            "inventory_id": inventory_id,
-            "item_id": item_id,
-            "created": False,
-            "before_stack": before_stack,
-            "after_stack": after_stack,
-            "credited": amount,
-        }
+    before_row = cur.fetchone()
+    if not before_row:
+        raise RuntimeError(f"seller controller {controller_id} has no Solaris bank balance row")
+    before_balance = int(before_row["balance"])
 
-    max_item_count = inventory.get("max_item_count")
-    if max_item_count is not None and int(max_item_count) > 0:
-        cur.execute(
-            """
-            select slot.position_index
-            from generate_series(0, %s - 1) as slot(position_index)
-            where not exists (
-                select 1 from dune.items i
-                where i.inventory_id=%s and i.position_index=slot.position_index
-            )
-            order by slot.position_index
-            limit 1
-            """,
-            (int(max_item_count), inventory_id),
-        )
-    else:
-        cur.execute(
-            """
-            select coalesce(max(position_index), -1) + 1 as position_index
-            from dune.items
-            where inventory_id=%s
-            """,
-            (inventory_id,),
-        )
-    position = cur.fetchone()
-    if not position:
-        raise RuntimeError(f"carried inventory {inventory_id} has no free slot")
-    position_index = int(position["position_index"])
-    cur.execute("select dune.advance_items_id_sequencer(1) as item_id")
-    item_id = int(cur.fetchone()["item_id"])
     cur.execute(
         """
-        select dune.save_item((
-            %s,%s,%s,%s,'SolarisCoin',true,%s,'{}'::jsonb,0,null
-        )::dune.inventoryitem)
+        update dune.player_virtual_currency_balances
+        set balance = balance + %s
+        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        returning balance
         """,
-        (item_id, inventory_id, amount, position_index, int(time.time() * 1000)),
+        (amount, controller_id),
     )
+    after_row = cur.fetchone()
+    if not after_row:
+        raise RuntimeError("Solaris bank credit did not update a balance row")
+    after_balance = int(after_row["balance"])
+
+    # Keep the Exchange user's visible Solari mirror aligned with the bank
+    # balance, matching the established bank-grant path.
     cur.execute(
-        "select * from dune.load_item(%s)",
-        (item_id,),
+        """
+        with ensured as (
+            select dune.dune_exchange_get_user_id(%s) as id
+        )
+        update dune.dune_exchange_users
+        set solari_balance=%s
+        where id=(select id from ensured)
+        returning solari_balance
+        """,
+        (owner_id, after_balance),
     )
-    saved = cur.fetchone()
-    if not saved or int(saved["stack_size"]) != amount or saved["template_id"] != "SolarisCoin":
-        raise RuntimeError("new SolarisCoin inventory item verification failed")
+    mirror_row = cur.fetchone()
+    if not mirror_row or int(mirror_row["solari_balance"]) != after_balance:
+        raise RuntimeError("Exchange Solari mirror verification failed")
+
+    cur.execute(
+        """
+        select balance
+        from dune.player_virtual_currency_balances
+        where player_controller_id=%s and currency_id=dune.get_solaris_id()
+        """,
+        (controller_id,),
+    )
+    verified_row = cur.fetchone()
+    if not verified_row or int(verified_row["balance"]) != after_balance:
+        raise RuntimeError("Solaris bank balance verification failed")
     return {
-        "inventory_id": inventory_id,
-        "item_id": item_id,
-        "created": True,
-        "before_stack": 0,
-        "after_stack": amount,
-        "credited": amount,
+        "before_balance": before_balance,
+        "after_balance": after_balance,
+        "credited": after_balance - before_balance,
     }
+
+
 
 
 def revision_matches(conn, order):
@@ -2382,7 +2323,7 @@ def purchase_total_price(order):
 def render_purchase_notice(order):
     template = env(
         "DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE",
-        "Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.",
+        "Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your bank after your next relog.",
     )
     return template.format(
         order_id=order.get("id"),
@@ -2494,7 +2435,7 @@ def execute_direct_seller_claim(cur, row):
     actual_value = int(locked["item_price"]) * int(locked["stack_size"])
     if actual_value != expected:
         raise RuntimeError(f"settlement value changed before claim: expected {expected}, got {actual_value}")
-    inventory_result = credit_solaris_inventory(cur, row["owner_id"], expected)
+    bank_result = credit_solaris_bank(cur, row["owner_id"], expected, owner_id=row["owner_id"])
     cur.execute("delete from dune.dune_exchange_orders where id=%s", (row["order_id"],))
     cur.execute(
         """
@@ -2511,14 +2452,11 @@ def execute_direct_seller_claim(cur, row):
     return {
         "total_item_value": expected,
         "original_order_id": locked["original_order_id"],
-        "inventory_id": inventory_result["inventory_id"],
-        "item_id": inventory_result["item_id"],
-        "inventory_created": inventory_result["created"],
-        "before_inventory_stack": inventory_result["before_stack"],
-        "after_inventory_stack": inventory_result["after_stack"],
-        "credited": inventory_result["credited"],
+        "before_bank_balance": bank_result["before_balance"],
+        "after_bank_balance": bank_result["after_balance"],
+        "credited": bank_result["credited"],
         "still_exists": still_exists,
-        "method": "validated_inventory_solaris_item",
+        "method": "validated_bank_solaris_balance",
     }
 
 
@@ -2625,11 +2563,11 @@ def claim_settlement_once(args):
             audit({"event": "settlement-claim-preflight-repair", "key": key, "row": row})
         with conn.cursor() as cur:
             result = execute_direct_seller_claim(cur, row)
-            before_inventory_stack = result["before_inventory_stack"]
-            after_inventory_stack = result["after_inventory_stack"]
+            before_bank_balance = result["before_bank_balance"]
+            after_bank_balance = result["after_bank_balance"]
             still_exists = result["still_exists"]
         expected = int(row["expected_solari"])
-        credited = after_inventory_stack - before_inventory_stack if after_inventory_stack is not None and before_inventory_stack is not None else None
+        credited = after_bank_balance - before_bank_balance if after_bank_balance is not None and before_bank_balance is not None else None
         valid = (
             result.get("total_item_value") is not None
             and int(result["total_item_value"]) == expected
@@ -2644,8 +2582,8 @@ def claim_settlement_once(args):
                 "key": key,
                 "row": row,
                 "result": result,
-                "beforeInventoryStack": before_inventory_stack,
-                "afterInventoryStack": after_inventory_stack,
+                "beforeBankBalance": before_bank_balance,
+                "afterBankBalance": after_bank_balance,
                 "credited": credited,
                 "expected": expected,
                 "stillExists": still_exists,
@@ -2657,23 +2595,23 @@ def claim_settlement_once(args):
                 "reason": "native claim failed validation",
                 "row": row,
                 "result": result,
-                "beforeInventoryStack": before_inventory_stack,
-                "afterInventoryStack": after_inventory_stack,
+                "beforeBankBalance": before_bank_balance,
+                "afterBankBalance": after_bank_balance,
                 "credited": credited,
                 "expected": expected,
                 "stillExists": still_exists,
             }
         conn.commit()
         state["claimed_settlements"].append(key)
-        audit({"event": "settlement-claimed", "key": key, "row": row, "result": result, "beforeInventoryStack": before_inventory_stack, "afterInventoryStack": after_inventory_stack})
+        audit({"event": "settlement-claimed", "key": key, "row": row, "result": result, "beforeBankBalance": before_bank_balance, "afterBankBalance": after_bank_balance})
     except Exception:
         conn.rollback()
         conn.close()
         raise
     conn.close()
     save_json(STATE_PATH, state)
-    response = {"ok": True, "dryRun": False, "claimed": key, "row": row, "result": result, "beforeInventoryStack": before_inventory_stack, "afterInventoryStack": after_inventory_stack}
-    log_event("settlement-claim-complete", orderId=args.claim_settlement, credited=result.get("credited"), beforeInventoryStack=before_inventory_stack, afterInventoryStack=after_inventory_stack)
+    response = {"ok": True, "dryRun": False, "claimed": key, "row": row, "result": result, "beforeBankBalance": before_bank_balance, "afterBankBalance": after_bank_balance}
+    log_event("settlement-claim-complete", orderId=args.claim_settlement, credited=result.get("credited"), beforeBankBalance=before_bank_balance, afterBankBalance=after_bank_balance)
     return response
 
 

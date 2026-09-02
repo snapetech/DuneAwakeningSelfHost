@@ -41,7 +41,7 @@ The 06:00 target is deliberately after Funcom's nightly maintenance window. If S
 
 ```text
 05:30  dune-daily-maintenance-schedule.timer fires
-05:30  scripts/schedule-daily-maintenance.sh posts a restart job to the admin panel
+05:30  scripts/schedule-daily-maintenance.sh reconciles/posts the restart job and verifies persistence
 05:30  staged candidate receives an early readiness check; uncertified falls back to current
 05:30  first in-game warning is sent immediately
 05:30-05:55  warnings repeat every 5 minutes
@@ -81,8 +81,10 @@ DUNE_STEAMCMD_VALIDATE=true
 DUNE_STEAMCMD_TIMEOUT_SECONDS=1800
 DUNE_DAILY_RESTART_SCHEDULE_WINDOW=05:25-05:35
 DUNE_DAILY_RESTART_ALLOW_OUTSIDE_WINDOW=false
-DUNE_DAILY_RESTART_DELAY=30min
+DUNE_DAILY_RESTART_TIME=06:00
 DUNE_DAILY_RESTART_REPEAT_SECONDS=600
+DUNE_DAILY_RESTART_RETRY_SECONDS=60
+DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS=1500
 DUNE_DAILY_RESTART_MESSAGE=Daily maintenance restart at 6:00 AM. Please get to a safe place.
 DUNE_DAILY_RESTART_UPDATE_POLICY=certified
 DUNE_RESTART_CLEAR_PLAYER_RMQ_SESSIONS=true
@@ -125,9 +127,15 @@ The installer renders:
 - `config/systemd/dune-daily-maintenance-schedule.service`
 - `config/systemd/dune-daily-maintenance-schedule.timer`
 
-The timer runs at `05:30:00` and creates an admin-panel restart job with `delay=30min`, so the actual maintenance begins at 06:00.
+The timer runs at `05:30:00` and creates an admin-panel restart job with an
+explicit `runAt` of 06:00 local time. The scheduler retries and reconciles the
+persisted job until the retry deadline, so a slow panel or lost HTTP response
+cannot silently skip the morning maintenance. The job carries a date key and
+is idempotent across timer retries.
 
-The timer is intentionally non-persistent. If the host is down at 05:30, DASH skips that day's automatic maintenance schedule instead of creating a late "06:00" restart at the wrong wall-clock time.
+The timer is persistent. If the host is down at 05:30, systemd runs the
+scheduler after boot; it targets the next safe 06:00 local window instead of
+creating an immediate late restart.
 
 To enable a host reboot only when maintenance actually installs a newer Steam
 build, first install the boot-time resume service on `kspls0`:
@@ -196,6 +204,29 @@ update, restores the current build, verifies readiness, and reports the job as
 failed even when service recovery succeeds. For an intentional shutdown, the
 target remains offline. Every execution produces a signed stage-by-stage
 outcome; see [`maintenance-intelligence.md`](maintenance-intelligence.md).
+
+## Restart Batching
+
+The `start` phase for `target=all` (a full-fleet restart, including the daily
+job above) previously recreated every configured map service in one
+`docker compose up -d` invocation. On a deployment with a large map catalog
+this created a thundering herd: Compose starts every container essentially
+simultaneously, and on `kspls0` this was measured pushing individual map
+ready-times to the Capacity Intelligence collector's 300-second start timeout
+-- some recorded as outright timeouts, one pair over 13 minutes -- versus the
+~90-260 seconds a single guarded demand start takes. That evidence (`source:
+observed` entries in `scripts/capacity-intelligence.py status` clustered at
+one `startedAt` timestamp, once per day, with duration at or past the
+timeout) is what identified the daily job specifically, as opposed to normal
+player-triggered map transitions.
+
+`scripts/restart-target.sh` now batches a `target=all` start into groups
+(`DUNE_RESTART_ALL_BATCH_SIZE`, default 6 services per batch) with a pause
+between batches (`DUNE_RESTART_ALL_BATCH_PAUSE_SECONDS`, default 60s) inside
+the same helper container invocation, so the daily job (and any other
+`target=all` restart) no longer forces the whole fleet through cold init at
+once. This applies only to `target=all`; a targeted restart of a specific
+service subset is unaffected and unbatched, since those are already small.
 
 ## Update Logic
 

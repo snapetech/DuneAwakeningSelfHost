@@ -79,6 +79,7 @@ the publication gate.
   drift invalidation, fail-closed browser apply enforcement, and constant-I/O
   Docker manifest inspection that skips multi-gigabyte image layers.
 - Cache-aware, host-local CPU-affinity generation with guarded no-restart live application, Compose persistence, and rollback.
+- Optional swap-warm idle policy: keeps chosen dynamic maps running continuously and reclaims their idle memory via cgroup `memory.high` into swap instead of stopping the container, trading a full cold Unreal Engine boot for a bounded page-in on demand. Off by default; see [`docs/swap-warm-maps.md`](docs/swap-warm-maps.md).
 - Backup-first Linux sysctl/THP/NIC-ring/IRQ tuning that preserves larger existing network maxima and never restarts Docker.
 - Live inventory slot-integrity audit plus hostname-, backup-, capacity-, and transaction-gated no-delete conflict repair.
 - Guarded admin writes for currency, Solari, XP, skills, water, kick/kick-all, vehicle spawn/repair/refuel, Landsraad rewards/contributions, blueprints, augments, items, offline transaction-verified stack/quality edits, care packages, and catalog workflows.
@@ -811,6 +812,7 @@ make install-daily-maintenance-timer ENV_FILE=.env
 make install-player-presence-announcer-service ENV_FILE=.env
 make install-artificial-exchange-buyer-service ENV_FILE=.env
 make install-artificial-exchange-populator-service ENV_FILE=.env
+make install-swap-warm-service ENV_FILE=.env
 ```
 
 The daily maintenance flow targets a 06:00 local restart with warning
@@ -1161,6 +1163,7 @@ Start from [`.env.example`](.env.example). It is the source of truth for the ful
 | `DUNE_AUTOSCALER_BALANCED_RETENTION_*` | Balanced default/per-map warm retention, optional warm-map LRU cap, and available-memory eviction floor. |
 | `DUNE_AUTOSCALER_DEMAND_TTL_SECONDS` / `DUNE_AUTOSCALER_POLL_SECONDS` / `DUNE_AUTOSCALER_RECONCILE_SECONDS` / `DUNE_AUTOSCALER_FAST_START` | Demand protection, three-second incremental detection, lower-frequency full lifecycle reconciliation, and guarded cold-start optimization. |
 | `DUNE_ADMIN_METRICS_CACHE_SECONDS` | Single-flight bounded reuse for expensive retained-metrics documents; concurrent refreshes reuse the prior authenticated document, while live autoscaler safety gauges bypass the cache. |
+| `DUNE_SWAP_WARM_ENABLED` / `DUNE_SWAP_WARM_SERVICES` | Optional alternative idle policy for RAM-constrained hosts: keep chosen dynamic maps running and reclaim idle memory into swap instead of stopping the container. Off by default; see [`docs/swap-warm-maps.md`](docs/swap-warm-maps.md). |
 
 ### Bootstrap, community integrations, and public networking
 
@@ -1399,7 +1402,10 @@ Root-level research indexes:
 - [`scripts/recover-map.sh`](scripts/recover-map.sh): fixed-partition recovery.
 - [`scripts/start-map-with-post-hooks.sh`](scripts/start-map-with-post-hooks.sh): manual map start wrapper that runs post-start hooks and verifies runtime patches.
 - [`scripts/deploy-admin-panel.sh`](scripts/deploy-admin-panel.sh): drains and pauses autoscaler lifecycle work across Admin recreation, verifies ingress, and repairs process-local runtime patches on running core maps before autoscaling resumes.
-- [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook.
+- [`scripts/restart-target.sh`](scripts/restart-target.sh): scheduled restart execution hook; batches a `target=all` fleet restart to avoid a simultaneous cold-boot of every map.
+- [`scripts/map-memory-squeeze.sh`](scripts/map-memory-squeeze.sh): optional swap-warm primitive that reclaims a running map container's idle memory via cgroup `memory.high`.
+- [`scripts/swap-warm-daemon.sh`](scripts/swap-warm-daemon.sh): optional swap-warm idle-memory daemon; off by default, see [`docs/swap-warm-maps.md`](docs/swap-warm-maps.md).
+- [`scripts/enable-swap-warm-fleet.sh`](scripts/enable-swap-warm-fleet.sh) / [`scripts/disable-swap-warm-fleet.sh`](scripts/disable-swap-warm-fleet.sh): batched opt-in/opt-out for the swap-warm idle policy.
 - [`scripts/validate-landsraad-coriolis-cycle.sh`](scripts/validate-landsraad-coriolis-cycle.sh): guardrail that keeps Standard PvE DD on a weekly Coriolis cycle so Landsraad does not globally suspend.
 - [`scripts/install-daily-maintenance-timer.sh`](scripts/install-daily-maintenance-timer.sh): daily maintenance timer installer.
 - [`scripts/install-artificial-exchange-service.sh`](scripts/install-artificial-exchange-service.sh): artificial Exchange service installer.

@@ -783,15 +783,15 @@ failed a not-null constraint. In rollback testing it also showed it could delete
 the claim row without crediting when the base Solaris row was missing.
 
 The bot uses a direct validated transaction for seller Solari claims. Seller
-proceeds are credited as a carried `SolarisCoin` inventory stack, which is the
-player-visible path used by the game client:
+proceeds are credited to the player's bank (`player_virtual_currency_balances`)
+and mirrored to the Exchange user balance; no `SolarisCoin` inventory item or
+inventory slot is involved:
 
-- resolve and lock the seller's carried inventory (`inventory_type=0`)
-- merge into an existing `SolarisCoin` stack or allocate a free carried slot
-- save the item through `dune.save_item` and verify the persisted item/stack
+- ensure the seller has a base Solaris balance row and lock it
 - lock the completed seller claim
 - verify owner, completion type, item id, stack size, and expected Solari
-- credit exactly `item_price * stack_size` as inventory SolarisCoin
+- credit exactly `item_price * stack_size` to the bank
+- ensure the Exchange user row and verify its Solari mirror
 - delete the completed claim order
 - verify the claim row is gone
 - commit only if every check passes
@@ -1449,7 +1449,7 @@ DUNE_ARTIFICIAL_EXCHANGE_LOW_BUY_PROBABILITY=0.10
 DUNE_ARTIFICIAL_EXCHANGE_MEDIUM_BUY_PROBABILITY=0.25
 DUNE_ARTIFICIAL_EXCHANGE_HIGH_BUY_PROBABILITY=0.50
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ENABLED=true
-DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE=Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your inventory after your next relog.
+DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_TEMPLATE=Your Exchange listing was purchased: {count}x {template_id} for {price} Solari. The Solari will be in your bank after your next relog.
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_EXCHANGE=chat.whispers
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_CHANNEL=Whispers
 DUNE_ARTIFICIAL_EXCHANGE_PURCHASE_NOTIFY_ROUTING_KEY=

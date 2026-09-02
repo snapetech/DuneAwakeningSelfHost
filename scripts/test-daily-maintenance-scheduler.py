@@ -21,6 +21,8 @@ class DailyMaintenanceSchedulerTests(unittest.TestCase):
         self.bin.mkdir()
         self.capture = self.root / "request.json"
         self.headers = self.root / "headers.json"
+        self.state_file = self.root / "restart-state.json"
+        self.post_failures = self.root / "post-failures"
         self.env_file = self.root / ".env"
         self.env_file.write_text(
             "\n".join([
@@ -35,24 +37,46 @@ class DailyMaintenanceSchedulerTests(unittest.TestCase):
         curl = self.bin / "curl"
         curl.write_text(
             """#!/usr/bin/env python3
+import json
 import os, pathlib, sys
 args=sys.argv[1:]
 if any("/api/ops/update-readiness" in arg for arg in args):
     print(os.environ["FAKE_READINESS"])
 elif any("/api/security/change-contract" in arg for arg in args):
     index=args.index("--data")
-    request=__import__("json").loads(args[index + 1])
+    request=json.loads(args[index + 1])
     assert request["targetPath"] == "/api/ops/restart"
     print('{"ok":true,"required":true,"contract":{"governed":true},"token":"contract-token"}')
+elif any("/api/ops/restart" in arg for arg in args) and "--data" not in args:
+    state_file=pathlib.Path(os.environ["FAKE_STATE_FILE"])
+    print(state_file.read_text(encoding="utf-8") if state_file.exists() else '{"jobs":[]}')
 else:
     index=args.index("--data")
+    request=json.loads(args[index + 1])
     pathlib.Path(os.environ["FAKE_CAPTURE"]).write_text(args[index + 1], encoding="utf-8")
     pathlib.Path(os.environ["FAKE_HEADERS"]).write_text(__import__("json").dumps(args), encoding="utf-8")
+    failure_file=pathlib.Path(os.environ["FAKE_POST_FAILURE_FILE"])
+    remaining=int(failure_file.read_text(encoding="utf-8") or "0") if failure_file.exists() else 0
+    if remaining > 0:
+        failure_file.write_text(str(remaining - 1), encoding="utf-8")
+        print("simulated transient POST failure", file=sys.stderr)
+        raise SystemExit(28)
+    state_file=pathlib.Path(os.environ["FAKE_STATE_FILE"])
+    state_file.write_text(json.dumps({"jobs":[{
+        "id":"fake-daily", "status":"scheduled", "action":"restart", "target":"all",
+        "execute":True, "backup":True, "runAt":0,
+        "automaticDailyMaintenanceKey":request.get("daily_maintenance_key"),
+    }]}), encoding="utf-8")
+    if os.environ.get("FAKE_POST_LOST_RESPONSE") == "true":
+        print("simulated lost response", file=sys.stderr)
+        raise SystemExit(28)
     print('{"ok":true}')
 """,
             encoding="utf-8",
         )
         curl.chmod(0o755)
+        self.state_file.write_text('{"jobs":[]}', encoding="utf-8")
+        self.post_failures.write_text("0", encoding="utf-8")
 
     def invoke(self, readiness, **overrides):
         environment = os.environ.copy()
@@ -64,6 +88,8 @@ else:
             "FAKE_READINESS": json.dumps(readiness),
             "FAKE_CAPTURE": str(self.capture),
             "FAKE_HEADERS": str(self.headers),
+            "FAKE_STATE_FILE": str(self.state_file),
+            "FAKE_POST_FAILURE_FILE": str(self.post_failures),
         })
         environment.update(overrides)
         return subprocess.run(
@@ -89,6 +115,7 @@ else:
         self.assertEqual(0, completed.returncode, completed.stderr)
         body = json.loads(self.capture.read_text(encoding="utf-8"))
         self.assertEqual("current", body["update_policy"])
+        self.assertTrue(body["automatic_daily_maintenance"])
         self.assertIn("pinned to the current build", completed.stderr)
 
     def test_certified_candidate_remains_bound_for_execution_revalidation(self):
@@ -106,6 +133,45 @@ else:
         body = json.loads(self.capture.read_text(encoding="utf-8"))
         self.assertEqual("current", body["update_policy"])
         self.assertIn("response was invalid", completed.stderr)
+
+    def test_reconciles_an_existing_daily_job_without_posting_again(self):
+        target_epoch = int(__import__("time").time()) + 3600
+        target_epoch -= target_epoch % 60
+        target_time = __import__("time").strftime("%H:%M", __import__("time").localtime(target_epoch))
+        self.state_file.write_text(json.dumps({"jobs": [{
+            "id": "already-scheduled", "status": "scheduled", "action": "restart", "target": "all",
+            "execute": True, "backup": True, "runAt": target_epoch,
+        }]}), encoding="utf-8")
+
+        completed = self.invoke(
+            self.update_readiness(False), DUNE_DAILY_RESTART_TIME=target_time,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertFalse(self.capture.exists())
+        self.assertIn("persisted", completed.stdout)
+
+    def test_retries_transient_post_failure_until_job_is_persisted(self):
+        self.post_failures.write_text("1", encoding="utf-8")
+
+        completed = self.invoke(
+            self.update_readiness(False),
+            DUNE_DAILY_RESTART_RETRY_SECONDS="1",
+            DUNE_DAILY_RESTART_RETRY_WINDOW_SECONDS="5",
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("0", self.post_failures.read_text(encoding="utf-8"))
+        state = json.loads(self.state_file.read_text(encoding="utf-8"))
+        self.assertEqual("scheduled", state["jobs"][0]["status"])
+
+    def test_lost_post_response_is_reconciled_from_persisted_job(self):
+        completed = self.invoke(
+            self.update_readiness(False), FAKE_POST_LOST_RESPONSE="true",
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("persisted", completed.stdout)
 
     def test_automatic_policy_requires_explicit_receipt_enforcement_opt_out(self):
         completed = self.invoke(
