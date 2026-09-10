@@ -101,6 +101,10 @@ done
 
 if command -v systemctl >/dev/null 2>&1; then
   run_root systemctl daemon-reload
+  # The timer owns this oneshot. Stop and disable an older standalone
+  # service instance so its stale active state cannot suppress timer runs.
+  run_root systemctl disable dune-lan-reflection.service 2>/dev/null || true
+  run_root systemctl stop dune-lan-reflection.service 2>/dev/null || true
   run_root systemctl enable --now dune-map-watchdog.service
   run_root systemctl enable --now dune-director-watchdog.service
   run_root systemctl enable --now dune-lan-reflection.timer
