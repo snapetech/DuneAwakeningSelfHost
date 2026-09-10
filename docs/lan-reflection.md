@@ -71,13 +71,21 @@ Then enable host-side reflection on the Dune host:
 sudo ./scripts/setup-lan-reflection.sh
 ```
 
-For persistence, install the provided systemd unit:
+For persistence, install the rendered service and timer from the active
+checkout. The timer re-runs the idempotent repair after firewall reloads or
+Docker network changes:
 
 ```bash
-sudo install -m 0644 config/systemd/dune-lan-reflection.service /etc/systemd/system/dune-lan-reflection.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now dune-lan-reflection.service
+test "$(hostname)" = kspls0
+./scripts/install-autoheal-services.sh .env
+systemctl --no-pager --full status dune-lan-reflection.timer
 ```
+
+The auto-heal installer also renders the map and Director watchdog units.
+Use it as the normal production installation path so the unit paths point at
+the current repository checkout. For a LAN-only change, the timer and service
+templates can be installed separately, but both units must be installed and
+the timer must be enabled.
 
 The script:
 

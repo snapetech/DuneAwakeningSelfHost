@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# These tests use a fake runtime and exercise map policy, not the live
+# control-plane probe. Dedicated control-plane tests cover that path.
+export DUNE_WATCH_CONTROL_PLANE_ENABLED=false
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT

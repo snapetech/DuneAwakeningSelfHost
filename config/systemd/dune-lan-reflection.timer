@@ -1,0 +1,14 @@
+[Unit]
+Description=Reconcile Dune LAN and Docker bridge reflection rules
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=true
+Unit=dune-lan-reflection.service
+
+[Install]
+WantedBy=timers.target

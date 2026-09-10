@@ -14,6 +14,12 @@ Environment=DUNE_WATCH_LOCK_DIR=/tmp/dune-map-watchdog.lock
 Environment=DUNE_WATCH_SEED_NEIGHBORS=true
 Environment=DUNE_WATCH_SEED_INTERVAL=300
 Environment=DUNE_WATCH_SEED_TIMEOUT=90
+Environment=DUNE_WATCH_CONTROL_PLANE_ENABLED=true
+Environment=DUNE_WATCH_CONTROL_PLANE_INTERVAL=30
+Environment=DUNE_WATCH_CONTROL_PLANE_REPAIR_ENABLED=true
+Environment=DUNE_WATCH_CONTROL_PLANE_REPAIR_INTERVAL=300
+Environment=DUNE_WATCH_DEGRADED_CONFIRMATIONS=2
+Environment=DUNE_WATCH_REQUIRED_READY_PARTITIONS=1,2
 Environment=DOCKER_CONFIG=/home/keith/.docker
 ExecStart=/home/keith/Documents/code/DuneAwakeningSelfHost/scripts/watch-maps.sh /home/keith/Documents/code/DuneAwakeningSelfHost/.env
 Restart=always

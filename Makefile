@@ -17,6 +17,9 @@ RELEASE_DIR ?= dist/release
 .PHONY: test-update-env-file test-update-steam-tool test-patch-dune-directory-caddy test-sietches test-configure-autoscaler-profile test-inventory-conflicts inventory-integrity-audit inventory-integrity-repair-preview test-cpu-affinity cpu-affinity-generate cpu-affinity-status cpu-affinity-preview test-host-tuning host-tuning-status host-tuning-plan test-admin-access-control admin-access-list test-outbound-webhooks webhooks-init test-offline-teleport test-character-backups webhooks-list test-discord-bot discord-bot-check install-discord-bot-service test-parity-diagnostics test-client-deployment test-windows-client-loader-package test-loader-package-reproducibility test-progression-admin test-player-life-recovery test-change-approvals test-change-contracts test-public-directory test-audit-ledger test-feature-readiness test-feature-readiness-history test-credential-lifecycle
 .PHONY: test-public-ip-canary test-canary-autopilot test-operations-briefing test-operations-calendar test-alert-inbox test-restore-alert-inbox test-peer-watch test-release-packaging test-vendored-release-tools release-package release-verify
 .PHONY: install-swap-warm-service test-swap-warm
+.PHONY: test-control-plane-health install-autoheal-services
+
+validate: test-control-plane-health
 
 validate: compose-config check-compose-static-ips validate-research-build-tags surface-ledger secret-scan test-update-env-file test-update-steam-tool test-patch-dune-directory-caddy test-watch-maps test-admin-panel-safe-surfaces test-readme-screenshots test-storage-cleanup test-public-ip-monitor test-sietches test-configure-autoscaler-profile test-inventory-conflicts test-cpu-affinity test-host-tuning test-admin-access-control test-change-approvals test-change-contracts test-public-directory test-feature-readiness test-feature-readiness-history test-credential-lifecycle test-audit-ledger test-federated-auth test-backup-encryption test-restore-drill test-rabbitmq-restore-drill test-operational-slo test-capacity-intelligence test-maintenance-planner test-desired-state test-change-intelligence test-deployment-assurance test-update-readiness test-maintenance-outcomes test-hotfix-update-readiness test-outbound-webhooks test-discord-bot test-community-rewards test-creator-canary test-moderation test-base-creator test-base-retirement test-base-recovery-reminders test-vehicle-retirement test-vehicle-recovery-reminders test-gameplay-presets test-command-console test-cosmetics-admin test-progression-admin test-player-life-recovery test-offline-teleport test-character-backups test-deployment-packaging test-parity-diagnostics test-client-deployment test-windows-client-loader-package test-loader-package-reproducibility test-character-slot-tool test-research-catalog test-discovery-tools test-admin-chat test-admin-grant-item test-smugglers-run-mp test-operational-borrowing test-artificial-exchange test-artificial-exchange-service test-vehicle-fidelity-investigation test-brt-dd-tooling public-site-check verify-local-state-ignored
 
@@ -926,6 +929,9 @@ watch-maps-status:
 install-map-watchdog-service:
 	./scripts/install-map-watchdog-service.sh $(ENV_FILE)
 
+install-autoheal-services:
+	./scripts/install-autoheal-services.sh $(ENV_FILE)
+
 install-swap-warm-service:
 	./scripts/install-swap-warm-service.sh $(ENV_FILE)
 
@@ -970,6 +976,10 @@ secret-scan:
 
 test-watch-maps:
 	./scripts/test-watch-maps.sh
+
+test-control-plane-health:
+	bash -n scripts/control-plane-health.sh scripts/director-watchdog.sh scripts/install-autoheal-services.sh scripts/recover-publication.sh scripts/test-control-plane-health.sh
+	./scripts/test-control-plane-health.sh
 
 .PHONY: test-player-identity
 

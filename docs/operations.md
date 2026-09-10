@@ -28,7 +28,11 @@ Check them with:
 docker compose --env-file .env ps
 ```
 
-The director, gateway, text-router, and game-server health checks are intentionally not guessed yet. Add those only after a stable local endpoint or command proves readiness accurately. A weak health check is worse than no health check because it can mark a broken routing state as healthy.
+The director, gateway, text-router, and game-server containers do not expose a
+single generic readiness endpoint. The repository uses explicit control-plane
+probes and the FLS publication health check instead of treating a running
+container as healthy. A weak health check is worse than no health check because
+it can mark a broken routing state as healthy.
 
 For a concise runtime verdict, use:
 
@@ -349,7 +353,9 @@ COMPOSE_FILES='compose.yaml:compose.allmaps.yaml' \
   ./scripts/watch-maps.sh .env
 ```
 
-The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. It recovers containers that are `exited` or `dead`, and it also checks running maps against Postgres for partition registration. A running map is recovered when its partition is not alive or is missing from `active_server_ids`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again. After the recovered partition is ready/alive/active, `recover-map.sh` runs `scripts/restart-post-start-health.sh`; that reapplies process-local runtime patches such as the instant-logoff timer patch. Do not replace this with a raw `docker compose up -d <map>` on live maps.
+The watchdog only recovers services that already have containers; it does not start maps that were intentionally never launched. Before each recovery scan it probes the map-to-Postgres path. If that dependency is degraded, it repairs LAN/bridge rules and neighbor entries at a bounded interval, then pauses map restarts until the dependency recovers. This prevents a shared network failure from turning into a fleet-wide restart storm.
+
+Once the dependency path is healthy, it recovers containers that are `exited` or `dead`, and checks running maps against Postgres for partition registration. A running map is recovered after two consecutive degraded observations by default, unless it is already exited/dead or an operator invokes `--once`. Recovery delegates to `scripts/recover-map.sh`, so the old partition owner is marked dead and aged out before the service starts again. After the recovered partition is ready/alive/active, `recover-map.sh` runs `scripts/restart-post-start-health.sh`; that reapplies process-local runtime patches such as the instant-logoff timer patch. Do not replace this with a raw `docker compose up -d <map>` on live maps.
 
 If a raw Compose map start or recreate is unavoidable during live repair, finish
 with:
@@ -373,6 +379,28 @@ For intentional manual starts, use the wrapper instead of raw Compose:
 Use `scripts/recover-map.sh` instead when the map has stale partition
 registration or `Local partition is not found`; the wrapper does not mark old
 partition owners dead.
+
+## Director/FLS Publication Watchdog
+
+`scripts/director-watchdog.sh` monitors both the Director container and the
+Director/Gateway publication path. Three consecutive failed publication checks
+trigger `scripts/recover-publication.sh`, which uses `scripts/restart-target.sh
+publication` and the normal post-start health hooks. A five-minute cooldown
+prevents repeated publication recovery from becoming a restart loop.
+
+Install the complete host-level auto-healing set on the active server:
+
+```bash
+test "$(hostname)" = kspls0
+./scripts/install-autoheal-services.sh .env
+systemctl --no-pager --full status dune-map-watchdog.service \
+  dune-director-watchdog.service dune-lan-reflection.timer
+```
+
+The installer renders paths for the current checkout, enables the two
+watchdogs, and runs LAN reflection from a one-minute timer. The timer is
+intentional: firewall reloads can remove runtime bridge rules while a
+`RemainAfterExit` oneshot would still appear active.
 
 ## Landsraad Coriolis Guard
 
@@ -417,7 +445,11 @@ seconds, and is bounded by `DUNE_WATCH_SEED_TIMEOUT`, default `90` seconds, so
 a slow Docker inspection or namespace command cannot stall map recovery
 indefinitely.
 
-By default the watchdog does not recover solely on `farm_state.ready=false`, because some live builds can report `ready=false` after the map log has reached `Server farm is READY`. To make readiness strict, set:
+Optional maps are not recovered solely on `farm_state.ready=false`, because
+some live builds can report `ready=false` after the map log has reached
+`Server farm is READY`. The core partitions (by default `1,2`, or the
+`DUNE_CORE_PARTITION_IDS` value) require `ready=true` in addition to alive and
+active. To make readiness strict for every watched map, set:
 
 ```bash
 DUNE_WATCH_REQUIRE_READY=true
@@ -607,11 +639,11 @@ active count also refuses to remove a managed container with connected players.
 The supported ceiling is 64 Survival dimensions. Forward `udp/8001-8063` and
 `udp/8101-8163` when those dimensions must be publicly reachable.
 
-For unattended operation, run the map watchdog as a host service after startup:
+For unattended operation, install the complete auto-healing set after startup:
 
 ```bash
-./scripts/install-map-watchdog-service.sh .env
-sudo systemctl enable --now dune-map-watchdog.service
+test "$(hostname)" = kspls0
+./scripts/install-autoheal-services.sh .env
 ```
 
 For unattended backup sync, configure one of the examples under

@@ -31,6 +31,14 @@ Environment:
   DUNE_WATCH_SEED_COMMAND   Neighbor seed command. Default: scripts/seed-gateway-neighbor.sh
   DUNE_WATCH_SEED_INTERVAL  Seconds between neighbor seeding attempts. Default: 300
   DUNE_WATCH_SEED_TIMEOUT   Max seconds for neighbor seeding. Default: 90
+  DUNE_WATCH_CONTROL_PLANE_ENABLED  Probe map-to-Postgres connectivity. Default: true
+  DUNE_WATCH_CONTROL_PLANE_INTERVAL Seconds between control-plane probes. Default: 30
+  DUNE_WATCH_CONTROL_PLANE_REPAIR_ENABLED Repair bridge/firewall state on probe failure. Default: true
+  DUNE_WATCH_CONTROL_PLANE_REPAIR_INTERVAL Minimum seconds between repairs. Default: 300
+  DUNE_WATCH_CONTROL_PLANE_SCRIPT  Probe script. Default: scripts/control-plane-health.sh
+  DUNE_WATCH_DEGRADED_CONFIRMATIONS Consecutive degraded checks before recovery. Default: 2
+  DUNE_WATCH_REQUIRED_READY_PARTITIONS Comma-separated partitions requiring ready=true.
+                                  Default: DUNE_CORE_PARTITION_IDS or 1,2
   DUNE_WORLD_PARTITION_COUNT Monitored partition ceiling. Default: 30; set 31
                              only when the second Deep Desert is intentionally online.
 USAGE
@@ -76,6 +84,14 @@ seed_neighbors="${DUNE_WATCH_SEED_NEIGHBORS:-false}"
 seed_command="${DUNE_WATCH_SEED_COMMAND:-$script_dir/seed-gateway-neighbor.sh}"
 seed_interval="${DUNE_WATCH_SEED_INTERVAL:-300}"
 seed_timeout="${DUNE_WATCH_SEED_TIMEOUT:-90}"
+control_plane_enabled="${DUNE_WATCH_CONTROL_PLANE_ENABLED:-true}"
+control_plane_interval="${DUNE_WATCH_CONTROL_PLANE_INTERVAL:-30}"
+control_plane_repair_enabled="${DUNE_WATCH_CONTROL_PLANE_REPAIR_ENABLED:-true}"
+control_plane_repair_interval="${DUNE_WATCH_CONTROL_PLANE_REPAIR_INTERVAL:-300}"
+control_plane_script="${DUNE_WATCH_CONTROL_PLANE_SCRIPT:-$script_dir/control-plane-health.sh}"
+degraded_confirmations="${DUNE_WATCH_DEGRADED_CONFIRMATIONS:-2}"
+required_ready_partitions="${DUNE_WATCH_REQUIRED_READY_PARTITIONS:-${DUNE_CORE_PARTITION_IDS:-}}"
+required_ready_partitions="${required_ready_partitions:-1,2}"
 
 read_env() {
   local key="$1" value
@@ -98,8 +114,8 @@ case "$partition_count" in
     ;;
 esac
 
-if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$command_timeout" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ ]]; then
-  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_COMMAND_TIMEOUT, DUNE_WATCH_SEED_INTERVAL, and DUNE_WATCH_SEED_TIMEOUT must be numeric\n' >&2
+if [[ ! "$interval" =~ ^[0-9]+$ || ! "$recovery_wait" =~ ^[0-9]+$ || ! "$cooldown" =~ ^[0-9]+$ || ! "$startup_grace" =~ ^[0-9]+$ || ! "$command_timeout" =~ ^[0-9]+$ || ! "$seed_interval" =~ ^[0-9]+$ || ! "$seed_timeout" =~ ^[0-9]+$ || ! "$control_plane_interval" =~ ^[0-9]+$ || ! "$control_plane_repair_interval" =~ ^[0-9]+$ || ! "$degraded_confirmations" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'DUNE_WATCH_INTERVAL, DUNE_WATCH_RECOVERY_WAIT, DUNE_WATCH_COOLDOWN, DUNE_WATCH_STARTUP_GRACE, DUNE_WATCH_COMMAND_TIMEOUT, DUNE_WATCH_SEED_INTERVAL, DUNE_WATCH_SEED_TIMEOUT, DUNE_WATCH_CONTROL_PLANE_INTERVAL, DUNE_WATCH_CONTROL_PLANE_REPAIR_INTERVAL, and DUNE_WATCH_DEGRADED_CONFIRMATIONS must be numeric\n' >&2
   exit 2
 fi
 if [[ -z "$recovery_timeout" ]]; then
@@ -165,7 +181,11 @@ MAP_PARTITIONS=(
 )
 
 declare -A LAST_RECOVERY=()
+declare -A DEGRADED_COUNTS=()
 last_seed=0
+last_control_plane_check=0
+last_control_plane_repair=0
+control_plane_blocked=false
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
@@ -185,6 +205,71 @@ run_recovery_command() {
   else
     "$@"
   fi
+}
+
+control_plane_preflight() {
+  local now rc repair_rc
+
+  case "$control_plane_enabled" in
+    1|true|yes|on|TRUE|True|YES|ON) ;;
+    *) return 0 ;;
+  esac
+  case "$mode" in
+    --status|--dry-run) return 0 ;;
+  esac
+  [[ -x "$control_plane_script" ]] || return 0
+
+  now="$(date +%s)"
+  if (( last_control_plane_check > 0 && now - last_control_plane_check < control_plane_interval )); then
+    [[ "$control_plane_blocked" != true ]]
+    return
+  fi
+  last_control_plane_check="$now"
+
+  set +e
+  "$control_plane_script" "$env_file" --allow-no-map --quiet
+  rc=$?
+  set -e
+  if (( rc == 0 )); then
+    if [[ "$control_plane_blocked" == true ]]; then
+      log 'control-plane preflight recovered; resuming map health checks'
+    fi
+    control_plane_blocked=false
+    return 0
+  fi
+
+  if [[ "$control_plane_repair_enabled" =~ ^(1|true|yes|on|TRUE|True|YES|ON)$ ]] \
+      && (( last_control_plane_repair == 0 || now - last_control_plane_repair >= control_plane_repair_interval )); then
+    last_control_plane_repair="$now"
+    log 'control-plane preflight failed; attempting network repair'
+    set +e
+    "$control_plane_script" "$env_file" --allow-no-map --repair --quiet
+    repair_rc=$?
+    set -e
+    if (( repair_rc == 0 )); then
+      control_plane_blocked=false
+      log 'control-plane network repair succeeded; resuming map health checks'
+      return 0
+    fi
+  fi
+
+  if [[ "$control_plane_blocked" != true ]]; then
+    log 'control-plane remains degraded; pausing map restarts until the dependency path recovers'
+  fi
+  control_plane_blocked=true
+  return 1
+}
+
+partition_requires_ready() {
+  local partition_id="$1"
+  local ready_partition
+  if [[ "$require_ready" =~ ^(1|true|yes|on|TRUE|True|YES|ON)$ ]]; then
+    return 0
+  fi
+  for ready_partition in $(printf '%s' "$required_ready_partitions" | tr ',' ' '); do
+    [[ "$ready_partition" == "$partition_id" ]] && return 0
+  done
+  return 1
 }
 
 container_status() {
@@ -275,7 +360,7 @@ partition_degraded_reason() {
     return
   fi
 
-  if [[ "$require_ready" == "true" && "$ready" != "t" && "$ready" != "true" ]]; then
+  if partition_requires_ready "$partition_id" && [[ "$ready" != "t" && "$ready" != "true" ]]; then
     printf 'not_ready'
     return
   fi
@@ -295,6 +380,26 @@ recover_service() {
   if (( now - last < cooldown )); then
     log "skip recovery during cooldown: service=$service partition=$partition_id"
     return
+  fi
+
+  if [[ "$mode" == "--dry-run" || "$mode" == "--once" ]]; then
+    DEGRADED_COUNTS[$service]=0
+  else
+    case "$reason" in
+    exited|dead|crashed)
+      DEGRADED_COUNTS[$service]=0
+      ;;
+    *)
+      degraded_count="${DEGRADED_COUNTS[$service]:-0}"
+      degraded_count=$((degraded_count + 1))
+      DEGRADED_COUNTS[$service]="$degraded_count"
+      if (( degraded_count < degraded_confirmations )); then
+        log "waiting for degraded confirmation: service=$service partition=$partition_id reason=$reason count=$degraded_count/$degraded_confirmations"
+        return
+      fi
+      DEGRADED_COUNTS[$service]=0
+      ;;
+    esac
   fi
 
   LAST_RECOVERY[$service]="$now"
@@ -383,6 +488,10 @@ autoscaler_manages_stopped_service() {
 }
 
 check_once() {
+  if ! control_plane_preflight; then
+    return 0
+  fi
+
   local item
   local service
   local partition_id
